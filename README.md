@@ -30,6 +30,15 @@ uv run flightcontrol test --url http://localhost:8080 --key <your key> --test 1
 use the same code with different seeds, so a local pass is a good sign but not
 a promise.
 
+On Windows, Docker Desktop's port forwarding slows down above about 30
+travelers per second, which makes test 2 look worse than your server is. For
+test 2, run Flight Control inside Docker on the same network as your airline.
+
+```
+docker build -t flightcontrol .
+docker run --rm --network <your compose network> flightcontrol flightcontrol test --url http://<your api service>:8080 --key <your key> --test 2
+```
+
 ## What is in this repository
 
 | Path | What it is |
