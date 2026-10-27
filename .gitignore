@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+data/
+*.sqlite3*
+# Private to the instructor. Lives in the flight-control-house repository.
+house/
+hidden/

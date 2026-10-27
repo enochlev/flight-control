@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Flight Control{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css?v=3">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='9' fill='%23c76a00'/></svg>">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/"><span class="dot"></span>Flight Control</a>
+  <nav>
+    <a href="/" class="{{ 'on' if nav == 'live' }}">Live</a>
+    <a href="/leaderboard" class="{{ 'on' if nav == 'leaderboard' }}">Leaderboard</a>
+    <a href="/contract" class="{{ 'on' if nav == 'contract' }}">Contract</a>
+    <a href="/catalog" class="{{ 'on' if nav == 'catalog' }}">Catalog</a>
+  </nav>
+  <span class="spacer"></span>
+  <span class="course">COMP 4340/6340 at NNU</span>
+</header>
+{% block body %}{% endblock %}
+<footer>Flight Control sends simulated travelers to each team's airline and checks every answer. Catalog {{ cat.year }}, {{ "{:,}".format(cat.count) }} flights.</footer>
+</body>
+</html>

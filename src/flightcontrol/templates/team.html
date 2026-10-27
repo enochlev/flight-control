@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}{{ team.name }} · Flight Control{% endblock %}
+{% block body %}
+<main class="narrow">
+  <h1>{{ team.name }}</h1>
+  <p class="lede">This page is private to your team. Anyone with the link can start runs for you, so do not post it.</p>
+  {% if msg %}<p class="msg">{{ msg }}</p>{% endif %}
+  {% if err %}<p class="msg err">{{ err }}</p>{% endif %}
+
+  <section class="card">
+    <h2 style="margin-top:0">Connection</h2>
+    <form method="post" action="/t/{{ token }}/settings">
+      <div class="field">
+        <label for="url">Your airline's base URL</label>
+        <input id="url" type="url" name="url" value="{{ team.url }}" placeholder="https://your-team.trycloudflare.com">
+      </div>
+      <div class="field">
+        <label for="key">API key {% if key_mask %}(saved as <span class="mono">{{ key_mask }}</span>, leave blank to keep it){% endif %}</label>
+        <input id="key" type="password" name="api_key" autocomplete="off" placeholder="the key your server expects">
+      </div>
+      <button type="submit">Save</button>
+    </form>
+    <p class="small" style="margin-bottom:0">
+      {% if ready %}<span class="ok">URL approved.</span> Flight Control can call your airline.
+      {% elif pending %}<span class="warn">Waiting for approval.</span> Your instructor approves each new URL before Flight Control calls it.
+      {% else %}<span class="muted">No URL saved yet.</span>{% endif %}
+    </p>
+  </section>
+
+  <section class="card" style="margin-top:16px">
+    <h2 style="margin-top:0">Run a test</h2>
+    <div id="now" class="small muted" style="margin-bottom:12px">Checking what is running.</div>
+    <div class="buttons" style="margin-bottom:14px">
+      <form class="inline" method="post" action="/t/{{ token }}/steady">
+        <input type="hidden" name="on" value="{{ 0 if team.steady else 1 }}">
+        <button type="submit" class="{{ '' if team.steady else 'ghost' }}" {% if not ready %}disabled{% endif %}>
+          {{ "Stop test 1 (steady)" if team.steady else "Start test 1 (steady)" }}</button>
+      </form>
+    </div>
+    <div class="buttons">
+      {% for t in [2, 3, 4, 5] %}
+      <form class="inline" method="post" action="/t/{{ token }}/run">
+        <input type="hidden" name="test" value="{{ t }}">
+        <button type="submit" class="ghost" {% if not ready or active or practice_left == 0 %}disabled{% endif %}>Test {{ t }} {{ TEST_NAMES[t] }}</button>
+      </form>
+      {% endfor %}
+    </div>
+    <p class="small muted" style="margin-bottom:0">{{ practice_left }} runs left in the last 24 hours. Each graded test resets your airline first, so do not run one while you are demoing. The rules for every test are on the <a href="/contract">contract</a> page.</p>
+  </section>
+
+  <h2>Your runs</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Run</th><th>Test</th><th>Status</th><th class="num">Score</th><th>Result</th><th>When</th></tr></thead>
+      <tbody>
+      {% for r in runs %}
+        <tr>
+          <td><a href="/t/{{ token }}/runs/{{ r.id }}">#{{ r.id }}</a>{% if r.official %} <span class="pill">official</span>{% endif %}</td>
+          <td>{{ r.test }} {{ TEST_NAMES[r.test] }}</td>
+          <td>{{ r.status }}</td>
+          <td class="num">{% if r.score is not none %}{{ "%.2f"|format(r.score) }}{% endif %}</td>
+          <td class="small">{% if r.gates_ok == 0 %}<span class="no">rule broken.</span> {% endif %}{{ r.summary }}</td>
+          <td class="small muted">{{ r.created | ago }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6" class="empty">No runs yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</main>
+<script>
+(function () {
+  const box = document.getElementById("now");
+  let wasActive = {{ "true" if active else "false" }};
+  async function poll() {
+    try {
+      const s = await (await fetch("/api/t/{{ token }}/live", {cache: "no-store"})).json();
+      const t = s.team;
+      let text = "Nothing is running.";
+      if (s.active && s.active.status === "queued") text = `Test ${s.active.test} is queued.`;
+      if (t && t.mode && t.mode !== "idle") {
+        text = `${t.mode === "steady" ? "Test 1 is running" : "Running " + t.mode}. ${t.rate.toFixed(1)} travelers per second, ${t.ok} ok and ${t.bad} not ok in the last 30 seconds.`;
+        if (t.phase) text += " " + t.phase + ".";
+        const v = (t.detail && t.detail.violations) || {};
+        const names = Object.keys(v);
+        if (names.length) text += " Problems so far are " + names.map(k => `${k} (${v[k]})`).join(", ") + ".";
+        if (t.error) text += " " + t.error;
+      }
+      box.textContent = text;
+      if (wasActive && !s.active) location.reload();
+      wasActive = !!s.active;
+    } catch (e) { }
+  }
+  poll();
+  setInterval(poll, 2000);
+})();
+</script>
+{% endblock %}

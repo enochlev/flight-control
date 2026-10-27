@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Admin · Flight Control{% endblock %}
+{% block body %}
+<main>
+  <h1>Instructor</h1>
+  {% if msg %}<p class="msg">{{ msg }}</p>{% endif %}
+  <p class="small muted">Engine last reported {% if engine_age is none %}never{% else %}{{ engine_age|round|int }} s ago{% endif %}.</p>
+
+  <section class="card">
+    <h2 style="margin-top:0">Teams</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Team</th><th>Private link</th><th>URL</th><th>Now</th><th>Run</th></tr></thead>
+      <tbody>
+      {% for t in teams %}
+        {% set lv = live.get(t.id, {}) %}
+        <tr>
+          <td><strong>{{ t.name }}</strong>{% if t.is_house %} <span class="pill">house</span>{% endif %}<br><span class="small muted">key {{ "set" if t.api_key else "missing" }}</span></td>
+          <td class="small mono">{% if not t.is_house %}<a href="/t/{{ t.token }}">{{ public_url }}/t/{{ t.token }}</a>{% endif %}</td>
+          <td class="small mono" style="word-break:break-all">{{ t.url or "-" }}
+            {% if t.url and t.url != t.approved_url %}
+              <form class="inline" method="post" action="/admin/teams/{{ t.id }}/approve"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Approve</button></form>
+            {% elif t.url %}<span class="ok">approved</span>{% endif %}</td>
+          <td class="small">{{ lv.mode or "idle" }} {% if lv.rate %}{{ lv.rate }}/s{% endif %}{% if lv.error %}<br><span class="no">{{ lv.error }}</span>{% endif %}
+            <form class="inline" method="post" action="/admin/teams/{{ t.id }}/steady"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="on" value="{{ 0 if t.steady else 1 }}"><button class="ghost" type="submit">{{ "stop steady" if t.steady else "start steady" }}</button></form></td>
+          <td>
+            <form class="inline" method="post" action="/admin/teams/{{ t.id }}/run">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <select name="test" style="width:auto">{% for n in [2,3,4,5] %}<option value="{{ n }}">{{ n }} {{ TEST_NAMES[n] }}</option>{% endfor %}</select>
+              <label class="small"><input type="checkbox" name="official" value="1"> official</label>
+              <button type="submit">Queue</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    <form method="post" action="/admin/teams" class="buttons" style="margin-top:14px; max-width:520px">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="text" name="name" placeholder="New team name" required style="flex:1">
+      <button type="submit">Add team</button>
+    </form>
+  </section>
+
+  <h2>Recent runs</h2>
+  <div class="card table-wrap"><table>
+    <thead><tr><th>Run</th><th>Team</th><th>Test</th><th>Status</th><th class="num">Score</th><th>Summary</th><th>When</th><th></th></tr></thead>
+    <tbody>
+    {% for r in runs %}
+      <tr>
+        <td><a href="/admin/runs/{{ r.id }}">#{{ r.id }}</a>{% if r.official %} <span class="pill">official</span>{% endif %}</td>
+        <td>{{ r.team_name }}</td><td>{{ r.test }} {{ TEST_NAMES[r.test] }}</td><td>{{ r.status }}</td>
+        <td class="num">{% if r.score is not none %}{{ "%.2f"|format(r.score) }}{% endif %}</td>
+        <td class="small">{{ r.summary }}</td><td class="small muted">{{ r.created | ago }}</td>
+        <td>{% if r.status == "queued" %}<form class="inline" method="post" action="/admin/runs/{{ r.id }}/cancel"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="ghost" type="submit">cancel</button></form>{% endif %}</td>
+      </tr>
+    {% else %}<tr><td colspan="8" class="empty">No runs yet.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</main>
+{% endblock %}

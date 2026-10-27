@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Flight Control{% endblock %}
+{% block body %}
+<main>
+  <h1>Live traffic</h1>
+  <p class="lede">Every arc is a booking that just went through. Orange arcs are student airlines and blue arcs are the house airline, which runs all the time.</p>
+  <div class="grid live-grid">
+    <section class="card">
+      <div class="stats">
+        <div><div class="label">Bookings per minute</div><div class="stat" id="bpm">0</div></div>
+        <div><div class="label">Airlines connected</div><div class="stat" id="nteams">0</div></div>
+        <div><div class="label">Travelers per second</div><div class="stat" id="tps">0</div></div>
+      </div>
+      <svg id="map" viewBox="0 0 1000 560" role="img" aria-label="Map of the 15 airports with recent bookings">
+        <path class="land" id="land"></path>
+        <g id="arcs"></g>
+        <g id="aps"></g>
+      </svg>
+      <p class="small muted" id="stale" hidden>The traffic engine has not reported in a while. The numbers here may be old.</p>
+    </section>
+    <aside class="grid">
+      <section class="card">
+        <div class="label" style="margin-bottom:8px">Airlines</div>
+        <div class="teams" id="teams"><div class="empty">Nobody is connected yet.</div></div>
+      </section>
+      <section class="card">
+        <div class="label" style="margin-bottom:6px">Departures board</div>
+        <div class="board" id="board"><div class="empty">Waiting for the first booking.</div></div>
+      </section>
+    </aside>
+  </div>
+</main>
+<script>window.AIRPORTS = {{ airports | tojson }};</script>
+<script src="/static/live.js?v=4"></script>
+{% endblock %}

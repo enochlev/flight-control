@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Leaderboard · Flight Control{% endblock %}
+{% block body %}
+<main class="narrow">
+  <h1>Leaderboard</h1>
+  <p class="lede">Each test counts your best of your last three runs. A run that breaks a rule, like overselling a flight, scores 0 for that test. The house airline is the instructor's reference and is shown for comparison.</p>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>Airline</th>
+        {% for t, w in weights.items() %}<th class="num">{{ TEST_NAMES[t] }}<br><span class="muted small">x{{ w }}</span></th>{% endfor %}
+        <th class="num">Total</th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td class="num">{{ loop.index }}</td>
+          <td>{{ r.team }}{% if r.is_house %} <span class="pill">reference</span>{% endif %}</td>
+          {% for t in weights %}<td class="num">{% if r.tests[t] is none %}<span class="muted">-</span>{% else %}{{ "%.2f"|format(r.tests[t]) }}{% endif %}</td>{% endfor %}
+          <td class="num"><strong>{{ r.total }}</strong></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="7" class="empty">No finished runs yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="small muted">Total is 40 x Rush + 20 x Last seat + 20 x Restart + 20 x Audit, out of 100.</p>
+</main>
+{% endblock %}

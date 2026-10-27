@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Run {{ run.id }} · Flight Control{% endblock %}
+{% block body %}
+{% set r = run.result %}
+<main class="narrow">
+  <p class="small"><a href="{{ back }}">Back</a></p>
+  <h1>Run {{ run.id }}, test {{ run.test }} {{ TEST_NAMES[run.test] }}</h1>
+  <p class="lede">{{ team.name }}{% if run.official %}, official run{% endif %}. {{ run.status }} {{ run.finished | ago }}.</p>
+
+  <section class="card">
+    <div class="stats">
+      <div><div class="label">Score</div><div class="stat">{% if run.score is not none %}{{ "%.2f"|format(run.score) }}{% else %}-{% endif %}</div></div>
+      <div><div class="label">Rules</div><div class="stat {{ 'ok' if run.gates_ok else 'no' }}">{{ "kept" if run.gates_ok else "broken" if run.gates_ok == 0 else "-" }}</div></div>
+      <div><div class="label">Travelers</div><div class="stat">{{ r.travelers or 0 }}</div></div>
+      <div><div class="label">Correct</div><div class="stat">{{ r.travelers_ok or 0 }}</div></div>
+    </div>
+    <p style="margin-bottom:0">{{ run.summary }}</p>
+    {% if r.gates %}<ul class="no">{% for g in r.gates %}<li>{{ g }}</li>{% endfor %}</ul>{% endif %}
+  </section>
+
+  {% if r.steps %}
+  <h2>Steps</h2>
+  <div class="card table-wrap"><table>
+    <thead><tr><th class="num">Travelers per second</th><th class="num">Travelers</th><th class="num">Correct</th><th class="num">p95 server ms</th><th>Passed</th></tr></thead>
+    <tbody>{% for s in r.steps %}<tr><td class="num">{{ s.rate }}</td><td class="num">{{ s.travelers }}</td><td class="num">{{ s.correct | pct }}</td><td class="num">{{ s.p95_server_ms }}</td><td class="{{ 'ok' if s.passed else 'no' }}">{{ "yes" if s.passed else "no" }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+
+  {% if r.rounds %}
+  <h2>Rounds</h2>
+  <div class="card table-wrap"><table>
+    <thead><tr><th>Flight</th><th class="num">Seats left</th><th class="num">Booked</th><th>Outcomes</th><th>Passed</th></tr></thead>
+    <tbody>{% for x in r.rounds %}<tr><td class="mono small">{{ x.flight }}</td><td class="num">{{ x.left }}</td><td class="num">{{ x.booked }}</td>
+      <td class="small mono">{% for k, v in (x.outcomes or {}).items() %}{{ k }} {{ v }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+      <td class="{{ 'ok' if x.passed else 'no' }}">{{ "yes" if x.passed else x.why }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+
+  {% if r.timeline %}
+  <h2>Restart</h2>
+  <div class="card"><dl class="kv">
+    {% for k, v in r.timeline.items() %}<dt>{{ k.replace("_", " ") }}</dt><dd>{{ v }}</dd>{% endfor %}
+    {% if r.after_recovery %}<dt>correct after recovery</dt><dd>{{ r.after_recovery.correct | pct }} of {{ r.after_recovery.travelers }}</dd>{% endif %}
+  </dl>
+  {% if r.lost %}<p class="no">Missing after the restart</p><ul class="mono small">{% for x in r.lost %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
+  </div>
+  {% endif %}
+
+  {% if r.mismatches %}
+  <h2>Audit mismatches</h2>
+  <div class="card"><ul class="mono small">{% for m in r.mismatches %}<li>{{ m }}</li>{% endfor %}</ul></div>
+  {% endif %}
+
+  {% if r.violations %}
+  <h2>Problems seen during the run</h2>
+  <div class="card table-wrap"><table>
+    <thead><tr><th>Problem</th><th class="num">Count</th><th>Examples</th></tr></thead>
+    <tbody>{% for k, v in r.violations.items() %}<tr><td>{{ k }}</td><td class="num">{{ v.count }}</td><td class="mono small">{% for e in v.examples %}{{ e }}<br>{% endfor %}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+
+  {% if r.ops %}
+  <h2>Per endpoint</h2>
+  <div class="card table-wrap"><table>
+    <thead><tr><th>Call</th><th class="num">Count</th><th class="num">p95 round trip ms</th><th class="num">p95 server ms</th><th>Status codes</th></tr></thead>
+    <tbody>{% for op, s in r.ops.items() %}<tr><td>{{ op }}</td><td class="num">{{ s.n }}</td><td class="num">{{ s.p95_rtt_ms }}</td><td class="num">{{ s.p95_server_ms }}</td>
+      <td class="mono small">{% for c, n in s.codes.items() %}{{ c }} {{ n }}{% if not loop.last %}, {% endif %}{% endfor %}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+</main>
+{% endblock %}
