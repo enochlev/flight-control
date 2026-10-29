@@ -21,6 +21,9 @@ RUSH_STEPS = [5, 10, 20, 30, 40]
 RUSH_STEP_S = 30
 RUSH_P95_MS = 500
 RUSH_OK = 0.95
+AUDIT_MIN_CORRECT = 0.95     # share of travelers that must be correct for the audit to count
+AUDIT_MIN_BOOKINGS = 100     # an airline that sells nothing cannot pass the audit
+DRAIN_EXTRA_S = 10           # wait this long past the hold time before auditing
 
 
 class RunFailed(Exception):
@@ -60,7 +63,8 @@ async def replay_unknown(ctx: Context) -> int:
             ctx.rec.op("replay", r)
             if r.status in (200, 201) and isinstance(r.body, dict) and "booking_id" in r.body:
                 led.confirm(Booked(r.body["booking_id"], key, iid, legs, pax,
-                                   int(r.body.get("total_cents") or 0)))
+                                   int(r.body.get("total_cents") or 0),
+                                   names=[p.get("name") for p in body.get("passengers", [])]))
                 break
             if r.status in (402, 404, 409, 410):
                 led.resolve_unknown(key)
@@ -91,7 +95,7 @@ async def export(client: TeamClient) -> dict[str, dict] | None:
             return out
 
 
-async def flight_counts(ctx: Context, limit: int = 400) -> dict[str, dict | None]:
+async def flight_counts(ctx: Context, limit: int = 3000) -> dict[str, dict | None]:
     fids = sorted(ctx.ledger.touched)
     if len(fids) > limit:
         fids = ctx.rng.sample(fids, limit)
@@ -113,9 +117,17 @@ async def check_flights(ctx: Context, *, drained: bool) -> tuple[list[str], bool
         if body is None:
             out.append(f"{fid}: GET /admin/flights did not answer")
             continue
-        sold, held = body.get("seats_sold"), body.get("seats_held")
+        sold, held, avail = body.get("seats_sold"), body.get("seats_held"), body.get("seats_available")
+        if not all(isinstance(x, int) for x in (sold, held, avail)):
+            out.append(f"{fid}: /admin/flights must return whole numbers for seats_sold, seats_held "
+                       f"and seats_available, got {sold!r}, {held!r}, {avail!r}")
+            continue
+        if min(sold, held, avail) < 0:
+            out.append(f"{fid}: seat numbers cannot be negative, got sold {sold}, held {held}, available {avail}")
         if body.get("capacity") != cap:
             out.append(f"{fid}: capacity {body.get('capacity')}, the catalog says {cap}")
+        if avail != cap - sold - held:
+            out.append(f"{fid}: seats_available {avail} is not capacity {cap} - sold {sold} - held {held}")
         if isinstance(sold, int) and sold > cap:
             oversold = True
             out.append(f"{fid}: OVERSOLD {sold} of {cap}")
@@ -123,7 +135,7 @@ async def check_flights(ctx: Context, *, drained: bool) -> tuple[list[str], bool
             oversold = True
         if sold != ctx.ledger.sold[fid]:
             out.append(f"{fid}: seats_sold {sold}, Flight Control counts {ctx.ledger.sold[fid]}")
-        if drained and held not in (0, None):
+        if drained and held != 0:
             out.append(f"{fid}: seats_held {held} after every hold expired")
     return out, oversold
 
@@ -146,6 +158,12 @@ async def audit(ctx: Context) -> list[str]:
                 problems.append(f"booking {bid} is {got.get('status')}, should be {b.status}")
             elif got.get("total_cents") != b.total:
                 problems.append(f"booking {bid} total {got.get('total_cents')}, should be {b.total}")
+            elif got.get("flight_ids") != b.flight_ids:
+                problems.append(f"booking {bid} flights {got.get('flight_ids')}, should be {b.flight_ids}")
+            elif not isinstance(got.get("passengers"), list) or len(got["passengers"]) != b.pax:
+                problems.append(f"booking {bid} has {len(got.get('passengers') or [])} passengers, should be {b.pax}")
+            elif b.names and _names(got) != b.names:
+                problems.append(f"booking {bid} passengers {_names(got)}, should be {b.names}")
         extra = set(ex) - set(led.bookings)
         if extra:
             problems.append(f"{len(extra)} bookings in export that Flight Control never confirmed, e.g. {sorted(extra)[:3]}")
@@ -157,11 +175,15 @@ async def audit(ctx: Context) -> list[str]:
             if r.body.get(k) != v:
                 problems.append(f"stats {k} = {r.body.get(k)}, Flight Control counts {v}")
         for k in ("active_holds", "seats_held"):
-            if r.body.get(k) not in (0, None):
-                problems.append(f"stats {k} = {r.body.get(k)} after every hold expired")
+            if r.body.get(k) != 0:
+                problems.append(f"stats {k} = {r.body.get(k)} after every hold expired, should be 0")
     flights, _ = await check_flights(ctx, drained=True)
     problems += flights
     return problems
+
+
+def _names(booking: dict) -> list:
+    return [p.get("name") if isinstance(p, dict) else p for p in booking.get("passengers") or []]
 
 
 def _violations(rec: Recorder) -> dict:
@@ -170,9 +192,12 @@ def _violations(rec: Recorder) -> dict:
 
 def _base(rec: Recorder) -> dict:
     trav = rec.travelers
+    from collections import Counter
+    reasons = Counter(t.reason or "failed" for t in trav if not t.ok)
     return {
         "travelers": len(trav),
         "travelers_ok": sum(t.ok for t in trav),
+        "failed_because": dict(reasons.most_common(8)),
         "not_started": rec.missed,
         "ops": rec.table(),
         "violations": _violations(rec),
@@ -348,13 +373,21 @@ async def test_restart(ctx: Context, demand: Demand, stop: Callable[[], bool],
     async def look(b: Booked):
         async with sem:
             r = await ctx.client.call("GET", f"/bookings/{b.booking_id}", timeout=5)
-            if r.status != 200 or not isinstance(r.body, dict) or r.body.get("status") != b.status:
+            got = r.body if isinstance(r.body, dict) else {}
+            if r.status != 200:
                 lost.append(f"{b.booking_id} ({r.status or r.error})")
+            elif (got.get("status") != b.status or got.get("total_cents") != b.total
+                  or got.get("flight_ids") != b.flight_ids
+                  or len(got.get("passengers") or []) != b.pax
+                  or (b.names and _names(got) != b.names)):
+                lost.append(f"{b.booking_id} came back different from before the restart")
 
     await asyncio.gather(*(look(b) for b in ctx.ledger.bookings.values()))
     gates = []
     if timeline.get("restart_status") != 202:
         gates.append(f"POST /admin/restart answered {timeline.get('restart_status')}, expected 202")
+    if "down_at" not in timeline:
+        gates.append("GET /health kept answering, so the server never went down")
     if "up_at" not in timeline:
         gates.append("never came back with a new boot_id")
     elif timeline["up_at"] - restart_at > 60:
@@ -375,7 +408,8 @@ async def test_restart(ctx: Context, demand: Demand, stop: Callable[[], bool],
 
 
 async def test_audit(ctx: Context, demand: Demand, stop: Callable[[], bool],
-                     duration: float = 180, rate: float = 10) -> dict:
+                     duration: float = 180, rate: float = 10,
+                     min_bookings: int = AUDIT_MIN_BOOKINGS) -> dict:
     await reset(ctx.client)
     start = window_start(ctx.rng, ctx.cat, 1)
     mix = Mix(p_hold=0.5, p_abandon=0.25, p_decline=0.1, p_dup=0.15, p_cancel=0.15,
@@ -385,17 +419,29 @@ async def test_audit(ctx: Context, demand: Demand, stop: Callable[[], bool],
                 span_days=1, stop=stop)
     if ctx.background:
         await asyncio.wait(ctx.background)
-    ctx.emit("phase", text=f"draining {HOLD_TTL_S + 10:.0f} s so every hold expires")
-    await asyncio.sleep(HOLD_TTL_S + 10)
+    ctx.emit("phase", text=f"draining {HOLD_TTL_S + DRAIN_EXTRA_S:.0f} s so every hold expires")
+    await asyncio.sleep(HOLD_TTL_S + DRAIN_EXTRA_S)
     await replay_unknown(ctx)
     problems = await audit(ctx)
     oversold = any("OVERSOLD" in p for p in problems)
-    gates = problems[:]
+    trav = ctx.rec.travelers
+    correct = sum(t.ok for t in trav) / len(trav) if trav else 0.0
+    booked = len(ctx.ledger.bookings)
+    gates = []
+    if ctx.rec.violations:
+        kind, n = ctx.rec.violations.most_common(1)[0]
+        gates.append(f"{sum(ctx.rec.violations.values())} answers broke a rule, most often: {kind} ({n})")
+    if correct < AUDIT_MIN_CORRECT:
+        gates.append(f"only {correct:.0%} of travelers were correct, at least {AUDIT_MIN_CORRECT:.0%} needed")
+    if booked < min_bookings:
+        gates.append(f"only {booked} bookings were made, at least {min_bookings} needed")
+    if problems:
+        gates.append(f"{len(problems)} things do not match Flight Control's record, first: {problems[0]}")
     score = 0.0 if gates else 1.0
-    return {"score": score, "gates_ok": not gates, "gates": gates[:5], "mismatches": problems[:60],
+    return {"score": score, "gates_ok": not gates, "gates": gates, "mismatches": problems[:60],
             "ledger": ctx.ledger.totals(),
             "summary": "everything matches" if not gates else
-                       f"{len(problems)} mismatches" + (", OVERSOLD" if oversold else ""),
+                       gates[0] + (", OVERSOLD" if oversold else ""),
             **_base(ctx.rec)}
 
 
@@ -416,4 +462,8 @@ async def run_test(test: int, client: TeamClient, *, seed: int, run_tag: str,
         return await TESTS[test](ctx, demand, stop)
     except RunFailed as e:
         return {"score": 0.0, "gates_ok": False, "gates": [str(e)], "summary": str(e),
+                "failed": True, **_base(ctx.rec)}
+    except Exception as e:
+        msg = f"the test stopped on an answer it could not handle ({type(e).__name__}: {e})"[:300]
+        return {"score": 0.0, "gates_ok": False, "gates": [msg], "summary": msg,
                 "failed": True, **_base(ctx.rec)}

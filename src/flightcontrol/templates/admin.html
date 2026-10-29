@@ -15,7 +15,7 @@
         {% set lv = live.get(t.id, {}) %}
         <tr>
           <td><strong>{{ t.name }}</strong>{% if t.is_house %} <span class="pill">house</span>{% endif %}<br><span class="small muted">key {{ "set" if t.api_key else "missing" }}</span></td>
-          <td class="small mono">{% if not t.is_house %}<a href="/t/{{ t.token }}">{{ public_url }}/t/{{ t.token }}</a>{% endif %}</td>
+          <td class="small">{% if not t.is_house %}<button class="ghost copy" type="button" data-link="{{ public_url }}/t/{{ t.token }}">Copy link</button>{% endif %}</td>
           <td class="small mono" style="word-break:break-all">{{ t.url or "-" }}
             {% if t.url and t.url != t.approved_url %}
               <form class="inline" method="post" action="/admin/teams/{{ t.id }}/approve"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Approve</button></form>
@@ -27,7 +27,8 @@
               <input type="hidden" name="csrf" value="{{ csrf }}">
               <select name="test" style="width:auto">{% for n in [2,3,4,5] %}<option value="{{ n }}">{{ n }} {{ TEST_NAMES[n] }}</option>{% endfor %}</select>
               <label class="small"><input type="checkbox" name="official" value="1"> official</label>
-              <button type="submit">Queue</button>
+              <button type="submit" title="Resets this team's airline before the test starts">Queue</button>
+              <div class="small muted">Resets the team's airline first.</div>
             </form>
           </td>
         </tr>
@@ -40,6 +41,20 @@
       <button type="submit">Add team</button>
     </form>
   </section>
+
+  <h2>Results</h2>
+  <p class="small muted">Best of each team's last three finished runs per test. Official runs are the ones you queued with "official" ticked. Practice runs are everything else started on this site. Runs students do on their own machines never show up here.</p>
+  <div class="card table-wrap"><table>
+    <thead><tr><th>Team</th>{% for t, w in weights.items() %}<th class="num">{{ TEST_NAMES[t] }}</th>{% endfor %}</tr></thead>
+    <tbody>
+    {% for t in teams if not t.is_house %}
+      {% set o = official.get(t.slug, {}).get("tests", {}) %}{% set pr = practice.get(t.slug, {}).get("tests", {}) %}
+      <tr><td>{{ t.name }}</td>
+        {% for n in weights %}<td class="num">{% if o.get(n) is not none %}<strong>{{ "%.2f"|format(o[n]) }}</strong> <span class="pill">official</span>{% elif pr.get(n) is not none %}<span class="muted">{{ "%.2f"|format(pr[n]) }} practice, no official run yet</span>{% else %}<span class="muted">not run</span>{% endif %}</td>{% endfor %}
+      </tr>
+    {% else %}<tr><td colspan="5" class="empty">No teams yet.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
 
   <h2>Recent runs</h2>
   <div class="card table-wrap"><table>
@@ -57,4 +72,11 @@
     </tbody>
   </table></div>
 </main>
+<script>
+document.querySelectorAll("button.copy").forEach(b => b.addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(new URL(b.dataset.link, location.origin).href); b.textContent = "Copied"; }
+  catch (e) { b.textContent = "Copy failed"; }
+  setTimeout(() => { b.textContent = "Copy link"; }, 1500);
+}));
+</script>
 {% endblock %}

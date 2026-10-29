@@ -21,14 +21,17 @@
       <button type="submit">Save</button>
     </form>
     <p class="small" style="margin-bottom:0">
-      {% if ready %}<span class="ok">URL approved.</span> Flight Control can call your airline.
-      {% elif pending %}<span class="warn">Waiting for approval.</span> Your instructor approves each new URL before Flight Control calls it.
-      {% else %}<span class="muted">No URL saved yet.</span>{% endif %}
+      {% if not team.url %}<span class="muted">No URL saved yet.</span>
+      {% elif pending %}<span class="warn">Your URL is waiting for approval.</span> Your instructor approves each new URL before Flight Control calls it.
+      {% else %}<span class="ok">Your URL is approved.</span>{% endif %}
+      {% if team.api_key %}<span class="ok">Your API key is saved.</span>{% else %}<span class="warn">No API key saved yet.</span>{% endif %}
+      Approval only means Flight Control is allowed to call this URL. The call log below shows whether your server actually answers.
     </p>
   </section>
 
   <section class="card" style="margin-top:16px">
-    <h2 style="margin-top:0">Run a test</h2>
+    <h2 style="margin-top:0">Practice runs</h2>
+    <p class="small muted" style="margin-top:0">These runs go through your tunnel and count only as practice. Your instructor runs the official tests.</p>
     <div id="now" class="small muted" style="margin-bottom:12px">Checking what is running.</div>
     <div class="buttons" style="margin-bottom:14px">
       <form class="inline" method="post" action="/t/{{ token }}/steady">
@@ -37,15 +40,31 @@
           {{ "Stop test 1 (steady)" if team.steady else "Start test 1 (steady)" }}</button>
       </form>
     </div>
-    <div class="buttons">
+    <p class="msg err small" style="margin:0 0 10px">Tests 2 to 5 reset your airline first. Every booking on it is deleted, so do not start one while you are demoing.</p>
+    <table class="small" style="margin-bottom:10px">
+      {% set what = {2: "Steps from 5 to 40 travelers per second. Checks speed and that nothing oversells.",
+                     3: "40 travelers race for the last 1 to 3 seats of a flight, 10 times.",
+                     4: "Calls your restart endpoint mid-traffic and checks every booking survived.",
+                     5: "Mixed traffic, then checks your stats and bookings match Flight Control's record exactly."} %}
       {% for t in [2, 3, 4, 5] %}
-      <form class="inline" method="post" action="/t/{{ token }}/run">
-        <input type="hidden" name="test" value="{{ t }}">
-        <button type="submit" class="ghost" {% if not ready or active or practice_left == 0 %}disabled{% endif %}>Test {{ t }} {{ TEST_NAMES[t] }}</button>
-      </form>
+      <tr>
+        <td style="width:170px">
+          <form class="inline" method="post" action="/t/{{ token }}/run">
+            <input type="hidden" name="test" value="{{ t }}">
+            <button type="submit" class="ghost" {% if not ready or active or practice_left == 0 %}disabled{% endif %}>Test {{ t }} {{ TEST_NAMES[t] }}</button>
+          </form>
+        </td>
+        <td class="muted">{{ what[t] }}</td>
+      </tr>
       {% endfor %}
-    </div>
-    <p class="small muted" style="margin-bottom:0">{{ practice_left }} runs left in the last 24 hours. Each graded test resets your airline first, so do not run one while you are demoing. The rules for every test are on the <a href="/contract">contract</a> page.</p>
+    </table>
+    <p class="small muted" style="margin-bottom:0">
+      {% if not ready %}The buttons start working once your URL is approved and your API key is saved.
+      {% elif active %}A run is already queued or running. The buttons come back when it finishes.
+      {% elif practice_left == 0 %}You have used today's runs. Each one comes back 24 hours after it was queued.
+      {% else %}{{ practice_left }} runs left in the last 24 hours.{% endif %}
+      The full rules for every test are in the <a href="/#tests">contract</a>. You can run the same tests on your own machine at any time.
+    </p>
   </section>
 
   <h2>Calls to your airline</h2>
@@ -86,6 +105,11 @@
     try {
       const s = await (await fetch("/api/t/{{ token }}/live", {cache: "no-store"})).json();
       const t = s.team;
+      if (!s.updated || Date.now() / 1000 - s.updated > 15) {
+        box.textContent = "Flight Control's test engine has not reported for a while, so nothing here is current. Tell your instructor if this lasts.";
+        failures = 0;
+        return;
+      }
       let text = "Nothing is running.";
       if (s.active && s.active.status === "queued") text = `Test ${s.active.test} is queued.`;
       if (t && t.mode && t.mode !== "idle") {
@@ -118,8 +142,17 @@
       }
       if (wasActive && !s.active) location.reload();
       wasActive = !!s.active;
-    } catch (e) { }
+      const lastOk = calls.slice().reverse().find(c => c.s >= 200 && c.s < 300);
+      if (lastOk) box.textContent += ` Last successful answer from your server at ${new Date(lastOk.t * 1000).toLocaleTimeString([], {hour12: false})}.`;
+      const last = calls[calls.length - 1];
+      if (last && (last.s === 401 || last.s === 403)) box.textContent += " Your server is refusing Flight Control's API key, so check that the key saved here matches your server.";
+      failures = 0;
+    } catch (e) {
+      failures += 1;
+      if (failures >= 3) box.textContent = "This page cannot reach Flight Control right now, so what you see may be out of date. It will retry on its own.";
+    }
   }
+  let failures = 0;
   poll();
   setInterval(poll, 2000);
 })();

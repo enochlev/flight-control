@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import json as _json
 import os
 import re
 import socket
@@ -79,8 +80,9 @@ class Resp:
 
 class TeamClient:
     def __init__(self, base_url: str, api_key: str, *, max_connections: int = 64,
-                 timeout: float = TIMEOUT_S, on_call=None) -> None:
+                 timeout: float = TIMEOUT_S, on_call=None, transport=None) -> None:
         self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
         self.on_call = on_call  # called with (method, path, Resp) after every request
         self._client = httpx.AsyncClient(
             base_url=self.base_url,
@@ -89,6 +91,7 @@ class TeamClient:
             limits=httpx.Limits(max_connections=max_connections,
                                 max_keepalive_connections=max_connections),
             follow_redirects=False,
+            transport=transport,
         )
 
     async def close(self) -> None:
@@ -96,7 +99,14 @@ class TeamClient:
 
     async def call(self, method: str, path: str, *, json: Any = None,
                    params: dict | None = None, timeout: float | None = None) -> Resp:
-        r = await self._call(method, path, json=json, params=params, timeout=timeout)
+        limit = timeout if timeout is not None else self.timeout
+        t0 = time.perf_counter()
+        try:
+            # One deadline for the whole call, so a server that trickles bytes cannot hold it open.
+            r = await asyncio.wait_for(self._call(method, path, json=json, params=params, timeout=limit),
+                                       timeout=limit)
+        except asyncio.TimeoutError:
+            r = Resp(0, None, (time.perf_counter() - t0) * 1000, None, "timeout")
         if self.on_call is not None:
             shown = path
             if params:
@@ -108,34 +118,42 @@ class TeamClient:
         return r
 
     async def _call(self, method: str, path: str, *, json: Any = None,
-                    params: dict | None = None, timeout: float | None = None) -> Resp:
+                    params: dict | None = None, timeout: float) -> Resp:
         t0 = time.perf_counter()
         try:
-            kw: dict[str, Any] = {"json": json, "params": params}
-            if timeout is not None:
-                kw["timeout"] = timeout
-            r = await self._client.request(method, path, **kw)
+            async with self._client.stream(method, path, json=json, params=params, timeout=timeout) as r:
+                chunks, size = [], 0
+                async for chunk in r.aiter_bytes():
+                    size += len(chunk)
+                    if size > MAX_BODY:
+                        return Resp(r.status_code, None, (time.perf_counter() - t0) * 1000, None,
+                                    "body too large")
+                    chunks.append(chunk)
+                content = b"".join(chunks)
+                headers = r.headers
+                status = r.status_code
         except httpx.TimeoutException:
             return Resp(0, None, (time.perf_counter() - t0) * 1000, None, "timeout")
         except (httpx.HTTPError, OSError) as e:
             return Resp(0, None, (time.perf_counter() - t0) * 1000, None, f"connect: {type(e).__name__}")
         rtt = (time.perf_counter() - t0) * 1000
         server_ms = None
-        m = _TIMING.search(r.headers.get("server-timing", ""))
+        m = _TIMING.search(headers.get("server-timing", ""))
         if m:
             try:
                 server_ms = float(m.group(1))
             except ValueError:
                 server_ms = None
-        if len(r.content) > MAX_BODY:
-            return Resp(r.status_code, None, rtt, server_ms, "body too large")
+        if server_ms is not None and (server_ms < 0 or server_ms > rtt):
+            # A server cannot spend longer on a request than the request took. Use the round trip.
+            server_ms = None
         body: Any = None
-        if r.content:
+        if content:
             try:
-                body = r.json()
+                body = _json.loads(content)
             except ValueError:
-                return Resp(r.status_code, None, rtt, server_ms, "json")
-        return Resp(r.status_code, body, rtt, server_ms)
+                return Resp(status, None, rtt, server_ms, "json")
+        return Resp(status, body, rtt, server_ms)
 
 
 async def gather_limited(coros, limit: int):

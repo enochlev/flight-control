@@ -222,8 +222,12 @@ def runs_for(team_id: int | None = None, limit: int = 50) -> list[dict]:
         return [dict(r) for r in con.execute(q, (*args, limit))]
 
 
-def leaderboard() -> list[dict]:
-    """Best of each team's last three finished runs per scored test."""
+def leaderboard(official: bool | None = None) -> list[dict]:
+    """Best of each team's last three finished runs per scored test.
+
+    official=True counts only official runs, False only practice runs, None both.
+    """
+    extra = "" if official is None else f" AND official={1 if official else 0}"
     out = []
     with connect() as con:
         for t in con.execute("SELECT * FROM teams ORDER BY name"):
@@ -231,7 +235,7 @@ def leaderboard() -> list[dict]:
             total = 0.0
             for test, w in WEIGHTS.items():
                 rs = con.execute(
-                    "SELECT score FROM runs WHERE team_id=? AND test=? AND status='done'"
+                    "SELECT score FROM runs WHERE team_id=? AND test=? AND status='done'" + extra +
                     " ORDER BY id DESC LIMIT 3", (t["id"], test)).fetchall()
                 best = max((r["score"] or 0.0 for r in rs), default=None)
                 row["tests"][test] = best

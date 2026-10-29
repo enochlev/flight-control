@@ -16,17 +16,22 @@ def _cmd_test(args: argparse.Namespace) -> int:
 
     base = check_url(args.url, allow_private=True)
     t0 = time.time()
+    quiet = args.json  # with --json, print nothing but the JSON
+
+    def say(text: str) -> None:
+        if not quiet:
+            print(text, flush=True)
 
     def emit(kind: str, **d) -> None:
         if kind in ("phase", "run"):
-            print(f"[{time.time() - t0:6.1f}s] {d.get('text', '')}", flush=True)
+            say(f"[{time.time() - t0:6.1f}s] {d.get('text', '')}")
 
     async def go() -> dict:
         def show(method: str, path: str, r) -> None:
             status = r.status or r.error
-            print(f"  {method:6s} {path[:70]:70s} {status!s:>8}  {r.rtt_ms:7.1f} ms", flush=True)
+            say(f"  {method:6s} {path[:70]:70s} {status!s:>8}  {r.rtt_ms:7.1f} ms")
 
-        client = TeamClient(base, args.key, on_call=show if args.verbose else None)
+        client = TeamClient(base, args.key, on_call=show if args.verbose and not quiet else None)
         rec = Recorder()
         stop_at = time.time() + args.minutes * 60 if args.test == 1 else None
 
@@ -35,13 +40,19 @@ def _cmd_test(args: argparse.Namespace) -> int:
                 await asyncio.sleep(10)
                 w = rec.window(10)
                 v = sum(rec.violations.values())
-                print(f"[{time.time() - t0:6.1f}s] {w['rate']:.1f} travelers/s, {w['bad']} not ok in the last 10 s, "
-                      f"{v} violations so far", flush=True)
+                say(f"[{time.time() - t0:6.1f}s] {w['rate']:.1f} travelers/s, {w['bad']} not ok in the last 10 s, "
+                    f"{v} problems so far")
 
         tick = asyncio.create_task(ticker())
         try:
-            return await run_test(args.test, client, seed=args.seed, run_tag=f"cli{int(t0)}", emit=emit,
-                                  rec=rec, stop=(lambda: time.time() > stop_at) if stop_at else (lambda: False))
+            try:
+                return await asyncio.wait_for(
+                    run_test(args.test, client, seed=args.seed, run_tag=f"cli{int(t0)}", emit=emit, rec=rec,
+                             stop=(lambda: time.time() > stop_at) if stop_at else (lambda: False)),
+                    timeout=max(15 * 60, args.minutes * 60 + 120))
+            except asyncio.TimeoutError:
+                return {"score": 0.0, "gates_ok": False, "gates": ["the test did not finish within 15 minutes"],
+                        "summary": "stopped after 15 minutes"}
         finally:
             tick.cancel()
             await client.close()
@@ -49,19 +60,38 @@ def _cmd_test(args: argparse.Namespace) -> int:
     res = asyncio.run(go())
     if args.json:
         print(json.dumps(res, indent=2, default=str))
-    else:
-        print()
-        print(f"Test {args.test}: {res.get('summary')}")
-        print(f"Score {res.get('score')}   gates passed: {res.get('gates_ok')}")
-        for g in res.get("gates", []):
-            print(f"  gate failed: {g}")
-        for k, v in res.get("violations", {}).items():
+        return 0 if res.get("gates_ok") in (True, None) else 1
+    print()
+    print(f"Test {args.test}: {res.get('summary')}")
+    if res.get("score") is not None:
+        print(f"Score {res['score']:.2f} out of 1.00. Rules {'kept' if res.get('gates_ok') else 'BROKEN'}.")
+    trav, ok = res.get("travelers", 0), res.get("travelers_ok", 0)
+    print(f"{ok} of {trav} travelers correct.")
+    for g in res.get("gates", []):
+        print(f"  FAILED: {g}")
+    for s in res.get("steps", []):
+        print(f"  step {s['rate']:>2}/s: {s['correct']:.0%} correct, p95 server {s['p95_server_ms']} ms, "
+              f"{'passed' if s['passed'] else 'not passed'}")
+    for r in res.get("rounds", []):
+        if not r.get("passed"):
+            print(f"  round {r['flight']} with {r['left']} seats left: {r.get('why')}")
+    if res.get("timeline"):
+        print(f"  restart: {res['timeline']}")
+    for m in res.get("mismatches", [])[:15]:
+        print(f"  mismatch: {m}")
+    if res.get("failed_because"):
+        print("Why travelers failed:")
+        for k, n in res["failed_because"].items():
+            print(f"  {n:5d} x {k}")
+    if res.get("violations"):
+        print("Rules broken (with examples):")
+        for k, v in res["violations"].items():
             print(f"  {v['count']:5d} x {k}")
             for ex in v["examples"][:2]:
                 print(f"          {ex}")
-        print("Per endpoint:")
-        for op, s in res.get("ops", {}).items():
-            print(f"  {op:12s} n={s['n']:6d}  p95 round trip {s['p95_rtt_ms']} ms   p95 server {s['p95_server_ms']} ms   {s['codes']}")
+    print("Per endpoint:")
+    for op, s in res.get("ops", {}).items():
+        print(f"  {op:12s} n={s['n']:6d}  p95 round trip {s['p95_rtt_ms']} ms   p95 server {s['p95_server_ms']} ms   {s['codes']}")
     return 0 if res.get("gates_ok") in (True, None) else 1
 
 
@@ -102,9 +132,12 @@ def main() -> None:
         from . import catalog
         out = Path(args.out)
         out.mkdir(parents=True, exist_ok=True)
-        (out / "flights.csv").write_text(catalog.get().to_csv(), encoding="utf-8")
-        (out / "airports.csv").write_text(catalog.airports_csv(), encoding="utf-8")
-        print(f"wrote {out / 'flights.csv'} and {out / 'airports.csv'}")
+        (out / "flights.csv").write_bytes(catalog.get().to_csv().encode())  # same bytes on every OS
+        (out / "airports.csv").write_bytes(catalog.airports_csv().encode())
+        import hashlib
+        data = (out / "flights.csv").read_bytes()
+        print(f"wrote {out / 'flights.csv'} ({len(catalog.get().flights):,} flights) and {out / 'airports.csv'}")
+        print(f"sha256 {hashlib.sha256(data).hexdigest()}")
     elif args.cmd == "add-team":
         from . import store
         store.init()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import heapq
 import random
 import time
@@ -19,6 +20,7 @@ from .client import Resp, TeamClient
 HOLD_TTL_S = 60.0
 TRAVELER_DEADLINE_S = 5.0
 SLACK = 3  # seats of margin before Flight Control calls a sold-out answer wrong
+STALE_S = 5.0  # search answers may be this many seconds out of date
 
 FIRST = ["Ada", "Ben", "Cora", "Dev", "Eli", "Fay", "Gus", "Hana", "Ivan", "June", "Kai",
          "Lena", "Milo", "Nora", "Omar", "Pia", "Quinn", "Rosa", "Sam", "Tara", "Uma",
@@ -38,6 +40,7 @@ class Booked:
     pax: int
     total: int
     status: str = "confirmed"
+    names: list[str] | None = None
 
 
 class Ledger:
@@ -55,7 +58,20 @@ class Ledger:
         self.touched: set[str] = set()
         self._held: Counter[str] = Counter()
         self._uncertain: Counter[str] = Counter()
+        self._pending: Counter[str] = Counter()     # holds sent, no answer yet
         self._expiry: list[tuple[float, str]] = []
+        self.full_since: dict[str, float] = {}      # flight -> when its sold seats reached capacity
+        self.changed_at: dict[str, float] = {}      # flight -> last time any seat on it moved
+        self.sold_log: dict[str, list[tuple[float, int]]] = {}  # flight -> (time, seats sold) history
+
+    def _touch(self, legs) -> None:
+        now = time.monotonic()
+        for f in legs:
+            self.changed_at[f] = now
+
+    def quiet_since(self, fid: str, t: float) -> bool:
+        """True if nothing about this flight's seats changed after time t."""
+        return self.changed_at.get(fid, 0.0) < t
 
     def _expire(self) -> None:
         now = time.monotonic()
@@ -71,13 +87,45 @@ class Ledger:
         return self._uncertain[fid]
 
     def room(self, fid: str) -> int:
+        """Seats Flight Control is sure are free. Anything that might be taken counts as taken."""
         f = self.cat.by_id[fid]
-        return f.capacity - self.sold[fid] - self.held(fid) - self._uncertain[fid]
+        return (f.capacity - self.sold[fid] - self.held(fid) - self._uncertain[fid]
+                - self._pending[fid])
+
+    def pending(self, legs: list[str], pax: int, sign: int) -> None:
+        self._touch(legs)
+        for f in legs:
+            self._pending[f] += sign * pax
+
+    def sold_at(self, fid: str, t: float) -> int:
+        """Seats sold on a flight at monotonic time t, from the booking history."""
+        n = 0
+        for when, sold in self.sold_log.get(fid, ()):
+            if when > t:
+                break
+            n = sold
+        return n
+
+    def least_sold_between(self, fid: str, t0: float, t1: float) -> int:
+        """The fewest seats sold on a flight at any moment from t0 to t1."""
+        least = self.sold_at(fid, t0)
+        for when, sold in self.sold_log.get(fid, ()):
+            if t0 < when <= t1:
+                least = min(least, sold)
+        return least
+
+    def _update_full(self, fid: str) -> None:
+        self.sold_log.setdefault(fid, []).append((time.monotonic(), self.sold[fid]))
+        if self.sold[fid] >= self.cat.by_id[fid].capacity:
+            self.full_since.setdefault(fid, time.monotonic())
+        else:
+            self.full_since.pop(fid, None)
 
     def add_hold(self, hold_id: str, legs: list[str], pax: int) -> None:
         exp = time.monotonic() + HOLD_TTL_S + 2
         self.holds[hold_id] = (legs, pax, exp)
         heapq.heappush(self._expiry, (exp, hold_id))
+        self._touch(legs)
         for f in legs:
             self._held[f] += pax
         self.touched.update(legs)
@@ -85,6 +133,7 @@ class Ledger:
     def drop_hold(self, hold_id: str) -> None:
         h = self.holds.pop(hold_id, None)
         if h:
+            self._touch(h[0])
             for f in h[0]:
                 self._held[f] -= h[1]
 
@@ -107,17 +156,21 @@ class Ledger:
             return
         self.bookings[b.booking_id] = b
         self.by_key[b.key] = b.booking_id
+        self._touch(b.flight_ids)
         for f in b.flight_ids:
             self.sold[f] += b.pax
+            self._update_full(f)
         self.touched.update(b.flight_ids)
 
     def cancel(self, booking_id: str) -> None:
         b = self.bookings.get(booking_id)
         self.unknown_cancels.discard(booking_id)
         if b and b.status == "confirmed":
+            self._touch(b.flight_ids)
             b.status = "cancelled"
             for f in b.flight_ids:
                 self.sold[f] -= b.pax
+                self._update_full(f)
 
     def totals(self) -> dict[str, int]:
         conf = [b for b in self.bookings.values() if b.status == "confirmed"]
@@ -163,6 +216,13 @@ class TravelerResult:
     tag: Any = None
 
 
+# The problems found during the current traveler. Each traveler runs in its own
+# task, and a task gets its own copy of this variable, so one traveler's problem
+# never counts against another traveler running at the same time.
+_traveler_problems: contextvars.ContextVar[list | None] = contextvars.ContextVar(
+    "fc_traveler_problems", default=None)
+
+
 class Recorder:
     def __init__(self) -> None:
         self.t0 = time.monotonic()
@@ -177,6 +237,9 @@ class Recorder:
         self.ops[name].add(r)
 
     def violation(self, kind: str, detail: str) -> None:
+        mine = _traveler_problems.get()
+        if mine is not None:
+            mine.append(kind)
         self.violations[kind] += 1
         if len(self.examples[kind]) < 5:
             self.examples[kind].append(detail)
@@ -276,8 +339,14 @@ def _bad(r: Resp) -> bool:
     return r.status == 0 or r.status >= 500
 
 
-def validate_search(ctx: Context, req: Request, r: Resp) -> list[dict]:
-    """Check a search answer and return its itineraries. Problems become violations."""
+def validate_search(ctx: Context, req: Request, r: Resp, sent_at: float,
+                    room_before: dict[str, int] | None) -> list[dict]:
+    """Check a search answer and return its itineraries. Problems become violations.
+
+    Search results may be a few seconds stale, so a flight only counts as wrongly
+    offered if it was already full when the search was sent and still is, and a
+    missing result only counts if it had room both before and after the search.
+    """
     cat, led = ctx.cat, ctx.ledger
     body = r.body if isinstance(r.body, dict) else None
     its = body.get("itineraries") if body else None
@@ -310,15 +379,23 @@ def validate_search(ctx: Context, req: Request, r: Resp) -> list[dict]:
         legs = iid.split("+")
         if ctx.checks:
             for fid in legs:
-                if led.sold[fid] + req.pax > cat.by_id[fid].capacity:
-                    ctx.rec.violation("offered a full flight",
-                                      f"{fid}: {led.sold[fid]} of {cat.by_id[fid].capacity} sold")
+                cap = cat.by_id[fid].capacity
+                # Wrong only if the party never fit at any moment in the allowed staleness window.
+                was = led.least_sold_between(fid, sent_at - STALE_S, time.monotonic())
+                if was + req.pax > cap:
+                    ctx.rec.violation("offered without enough seats",
+                                      f"{fid}: {was} of {cap} seats were already sold {STALE_S:.0f} s "
+                                      f"before this search, and it was offered for {req.pax}")
         returned.add(iid)
         good.append(it)
-    if ctx.checks:
+    if ctx.checks and room_before is not None:
         truth = oracle.itineraries(cat, req.origin, req.destination, req.day)
+        # Only judge flights whose seats did not move at all in the staleness window or while
+        # the search was out, so a valid answer that is a few seconds old is never wrong.
         roomy = [i for i in truth
-                 if all(led.room(f.flight_id) >= req.pax + SLACK for f in i.legs)]
+                 if all(led.quiet_since(f.flight_id, sent_at - STALE_S)
+                        and min(room_before.get(f.flight_id, 0), led.room(f.flight_id)) >= req.pax + SLACK
+                        for f in i.legs)]
         for i in roomy:
             if i.stops == 0 and i.itinerary_id not in returned:
                 ctx.rec.violation("missing nonstop", f"{i.itinerary_id} has room but was not returned")
@@ -346,112 +423,177 @@ def choose(cat: Catalog, its: list[dict], req: "Request") -> dict:
 
 
 async def traveler(ctx: Context, req: Request, mix: Mix, tag: Any = None) -> TravelerResult:
+    """Run one traveler and record whether every answer it got was correct.
+
+    A traveler is correct when every call got an answer (no timeout, no 5xx),
+    no rule in the contract was broken, and the whole trip took under 5 seconds.
+    """
+    mine: list[str] = []
+    _traveler_problems.set(mine)
     t0 = time.monotonic()
     started = ctx.rec.elapsed()
-    srv = 0.0
-    before = sum(ctx.rec.violations.values())
-    reason = ""
+    timing = [0.0]
+    try:
+        ok, why = await _trip(ctx, req, mix, timing)
+    except Exception as e:  # an answer Flight Control could not use counts against the airline
+        ctx.rec.violation("unreadable answer", f"{type(e).__name__}: {e}"[:200])
+        ok, why = False, "Flight Control could not read an answer"
+    late = time.monotonic() - t0 > TRAVELER_DEADLINE_S
+    good = ok and not late and not mine
+    reason = why if not ok else ("took longer than 5 s" if late else (mine[0] if mine else why))
+    res = TravelerResult(started, good, reason, timing[0], tag)
+    ctx.rec.traveler(res)
+    return res
 
-    def done(ok: bool, why: str = "") -> TravelerResult:
-        late = time.monotonic() - t0 > TRAVELER_DEADLINE_S
-        broke = sum(ctx.rec.violations.values()) > before
-        good = ok and not late and not broke
-        res = TravelerResult(started, good, why or ("too slow" if late else "violation" if broke else ""), srv, tag)
-        ctx.rec.traveler(res)
-        return res
 
+def _spent(r: Resp) -> float:
+    return r.server_ms if r.server_ms is not None else r.rtt_ms
+
+
+async def _trip(ctx: Context, req: Request, mix: Mix, timing: list[float]) -> tuple[bool, str]:
+    led = ctx.ledger
+    room_before = None
+    if ctx.checks:
+        truth = oracle.itineraries(ctx.cat, req.origin, req.destination, req.day)
+        room_before = {f.flight_id: led.room(f.flight_id) for i in truth for f in i.legs}
+    sent_at = time.monotonic()
     r = await ctx.client.call("GET", "/search", params={
         "origin": req.origin, "destination": req.destination,
         "date": req.day.isoformat(), "passengers": req.pax})
     ctx.rec.op("search", r)
-    srv += r.server_ms if r.server_ms is not None else r.rtt_ms
+    timing[0] += _spent(r)
     if r.status != 200:
         if r.status and r.status < 500:
-            ctx.rec.violation("search rejected", f"{r.status} for {req}")
-        return done(False, f"search {r.status or r.error}")
-    its = validate_search(ctx, req, r)
+            ctx.rec.violation("search rejected", f"{r.status} for {req.origin}-{req.destination} {req.day}")
+        return False, f"search answered {r.status or r.error}"
+    its = validate_search(ctx, req, r, sent_at, room_before)
     if not its or ctx.rng.random() >= mix.p_hold:
-        return done(True)
+        return True, ""
 
     pick = choose(ctx.cat, its, req)
     legs = pick["itinerary_id"].split("+")
-    r = await ctx.client.call("POST", "/holds", json={"itinerary_id": pick["itinerary_id"], "passengers": req.pax})
+    led.pending(legs, req.pax, +1)
+    try:
+        r = await ctx.client.call("POST", "/holds", json={"itinerary_id": pick["itinerary_id"], "passengers": req.pax})
+    finally:
+        led.pending(legs, req.pax, -1)
     ctx.rec.op("hold", r)
-    srv += r.server_ms if r.server_ms is not None else r.rtt_ms
+    timing[0] += _spent(r)
+    if r.unknown:
+        # The hold may exist on the airline's side. Treat its seats as taken until it would expire.
+        led.add_hold(f"unknown-{uuid.uuid4().hex}", legs, req.pax)
+        return False, f"hold got no answer ({r.error})"
     if r.status == 409:
-        if ctx.checks and all(ctx.ledger.room(f) >= req.pax + SLACK for f in legs):
-            ctx.rec.violation("sold out but seats remain", pick["itinerary_id"])
-        return done(True, "sold out")
-    if r.status != 201 or not isinstance(r.body, dict) or "hold_id" not in r.body:
+        if ctx.checks and all(led.room(f) >= req.pax + SLACK for f in legs):
+            ctx.rec.violation("sold out but seats remain",
+                              f"{pick['itinerary_id']} for {req.pax}, Flight Control counts at least "
+                              f"{min(led.room(f) for f in legs)} free")
+        return True, "sold out"
+    hold = r.body if isinstance(r.body, dict) else {}
+    if r.status != 201 or not isinstance(hold.get("hold_id"), str) or not isinstance(hold.get("total_cents"), int):
         if r.status and r.status < 500:
-            ctx.rec.violation("hold rejected", f"{r.status} {str(r.body)[:100]}")
-        return done(False, f"hold {r.status or r.error}")
-    hold = r.body
-    ctx.ledger.add_hold(hold["hold_id"], legs, req.pax)
-    total = hold.get("total_cents")
+            ctx.rec.violation("bad hold answer", f"{r.status} {str(r.body)[:120]}")
+        return False, f"hold answered {r.status}"
+    led.add_hold(hold["hold_id"], legs, req.pax)
+    total = hold["total_cents"]
     if total != hold.get("price_cents", -1) * req.pax:
         ctx.rec.violation("hold total is not price times passengers", str(hold)[:120])
 
     if ctx.rng.random() < mix.p_abandon:
-        return done(True, "abandoned hold")
+        return True, "abandoned hold"
 
     decline = ctx.rng.random() < mix.p_decline
     body = {"hold_id": hold["hold_id"], "passengers": ctx.names(req.pax),
             "payment_token": ctx.token(decline), "idempotency_key": ctx.key()}
     if ctx.rng.random() < mix.p_dup:
-        rs = await asyncio.gather(ctx.client.call("POST", "/bookings", json=body),
-                                  ctx.client.call("POST", "/bookings", json=body))
+        rs = list(await asyncio.gather(ctx.client.call("POST", "/bookings", json=body),
+                                       ctx.client.call("POST", "/bookings", json=body)))
     else:
         rs = [await ctx.client.call("POST", "/bookings", json=body)]
-    ids = set()
-    for rb in rs:
-        ctx.rec.op("book", rb)
-    rb = rs[0]
-    srv += rb.server_ms if rb.server_ms is not None else rb.rtt_ms
-    ctx.ledger.drop_hold(hold["hold_id"])
     for x in rs:
-        if x.status in (200, 201) and isinstance(x.body, dict) and "booking_id" in x.body:
-            ids.add(x.body["booking_id"])
+        ctx.rec.op("book", x)
+        timing[0] += _spent(x)
+    rb = rs[0]
+    led.drop_hold(hold["hold_id"])
+    # With a duplicate, both copies must be answered properly, not just one of them.
+    dup_trouble = None
+    if len(rs) > 1:
+        kinds = []
+        for x in rs:
+            if x.unknown or x.status >= 500:
+                dup_trouble = f"one copy of a repeated booking got {x.status or x.error}"
+            elif x.status in (200, 201) and not (isinstance(x.body, dict)
+                                                  and isinstance(x.body.get("booking_id"), str)):
+                ctx.rec.violation("bad booking answer", str(x.body)[:120])
+                dup_trouble = "one copy of a repeated booking had no booking_id"
+            kinds.append("ok" if x.status in (200, 201) else str(x.status))
+        # The contract says a repeat returns exactly the first answer, so the copies must match.
+        def same(x, y) -> bool:
+            sx, sy = (200 if x.status == 201 else x.status), (200 if y.status == 201 else y.status)
+            return sx == sy and x.body == y.body
+        if dup_trouble is None and not all(same(rs[0], x) for x in rs[1:]):
+            ctx.rec.violation("repeated booking answered differently",
+                              f"the same request got {rs[0].status} {str(rs[0].body)[:80]} and "
+                              f"{rs[1].status} {str(rs[1].body)[:80]}")
+            dup_trouble = "two copies of the same booking got different answers"
+        if dup_trouble is None and len(set(kinds)) > 1:
+            ctx.rec.violation("repeated booking answered differently",
+                              f"the same request got {' and '.join(kinds)}")
+            dup_trouble = "two copies of the same booking got different answers"
+    booked = [x.body for x in rs if x.status in (200, 201) and isinstance(x.body, dict)
+              and isinstance(x.body.get("booking_id"), str)]
+    ids = {b["booking_id"] for b in booked}
     if len(ids) > 1:
         ctx.rec.violation("duplicate booking for one idempotency key", ", ".join(sorted(ids)))
     if any(x.unknown for x in rs) and not ids:
-        ctx.ledger.mark_unknown(body["idempotency_key"], body, legs, req.pax, pick["itinerary_id"])
-        return done(False, "booking timed out")
+        led.mark_unknown(body["idempotency_key"], body, legs, req.pax, pick["itinerary_id"])
+        return False, "booking got no answer"
     if ids:
-        b = next(x.body for x in rs if x.status in (200, 201) and isinstance(x.body, dict) and "booking_id" in x.body)
+        b = booked[0]
         if decline:
             ctx.rec.violation("declined payment was booked", b["booking_id"])
         if b.get("total_cents") != total:
             ctx.rec.violation("booking total differs from hold", f"{b.get('total_cents')} vs {total}")
-        if b.get("flight_ids") and b.get("flight_ids") != legs:
-            ctx.rec.violation("booking flights differ from hold", b["booking_id"])
-        ctx.ledger.confirm(Booked(b["booking_id"], body["idempotency_key"], pick["itinerary_id"],
-                                  legs, req.pax, int(total or 0)))
+        if b.get("flight_ids") != legs:
+            ctx.rec.violation("booking flights differ from hold", f"{b.get('flight_ids')} vs {legs}")
+        led.confirm(Booked(b["booking_id"], body["idempotency_key"], pick["itinerary_id"],
+                           legs, req.pax, int(total), names=[p["name"] for p in body["passengers"]]))
         ctx.emit("book", origin=req.origin, destination=req.destination, pax=req.pax,
                  cents=total, stops=len(legs) - 1, date=req.day.isoformat())
         if ctx.rng.random() < mix.p_cancel:
             ctx.spawn(_cancel_later(ctx, b["booking_id"], mix))
-        return done(True)
+        if dup_trouble:
+            return False, dup_trouble
+        return True, ""
     if rb.status == 402:
         if not decline:
             ctx.rec.violation("good payment declined", hold["hold_id"])
-        return done(True, "payment declined")
+        if dup_trouble:
+            return False, dup_trouble
+        return True, "payment declined"
+    if rb.status in (200, 201):
+        ctx.rec.violation("bad booking answer", str(rb.body)[:120])
+        return False, "booking answer had no booking_id"
     if rb.status and rb.status < 500:
         ctx.rec.violation("booking rejected", f"{rb.status} {str(rb.body)[:100]}")
-    return done(False, f"book {rb.status or rb.error}")
+    return False, f"booking answered {rb.status or rb.error}"
 
 
 async def _cancel_later(ctx: Context, booking_id: str, mix: Mix) -> None:
-    await asyncio.sleep(ctx.rng.uniform(*mix.cancel_delay))
-    r = await ctx.client.call("DELETE", f"/bookings/{booking_id}")
-    ctx.rec.op("cancel", r)
-    if r.status == 200 and isinstance(r.body, dict) and r.body.get("status") == "cancelled":
-        ctx.ledger.cancel(booking_id)
-        ctx.emit("cancel", booking_id=booking_id)
-    elif r.unknown or r.status >= 500:
+    try:
+        await asyncio.sleep(ctx.rng.uniform(*mix.cancel_delay))
+        r = await ctx.client.call("DELETE", f"/bookings/{booking_id}")
+        ctx.rec.op("cancel", r)
+        if r.status == 200 and isinstance(r.body, dict) and r.body.get("status") == "cancelled":
+            ctx.ledger.cancel(booking_id)
+            ctx.emit("cancel", booking_id=booking_id)
+        elif r.unknown or r.status >= 500:
+            ctx.ledger.unknown_cancels.add(booking_id)
+        else:
+            ctx.rec.violation("cancel rejected", f"{r.status} for {booking_id}")
+    except Exception as e:
         ctx.ledger.unknown_cancels.add(booking_id)
-    else:
-        ctx.rec.violation("cancel rejected", f"{r.status} for {booking_id}")
+        ctx.rec.violation("unreadable answer", f"cancel {booking_id}: {type(e).__name__}"[:200])
 
 
 # -- open-loop arrivals -------------------------------------------------------------

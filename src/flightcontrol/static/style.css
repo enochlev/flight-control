@@ -128,7 +128,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; font-family: var(--mono); }
 .contract h1 { font-size: 28px; }
-.contract table { margin: 8px 0 16px; }
+.contract table { margin: 8px 0 16px; display: block; overflow-x: auto; }
 .contract td, .contract th { font-size: 14px; }
 footer { color: var(--muted); font-size: 12px; text-align: center; padding: 24px; }
 

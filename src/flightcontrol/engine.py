@@ -26,6 +26,7 @@ MAX_PARALLEL_RUNS = int(os.environ.get("FC_MAX_PARALLEL_RUNS", "2"))
 STEADY_RATE = float(os.environ.get("FC_STEADY_RATE", "1"))
 HOUSE_RATE = float(os.environ.get("FC_HOUSE_RATE", "2"))
 DEV = os.environ.get("FC_DEV") == "1"
+RUN_DEADLINE_S = 15 * 60  # no test should take longer, so a stuck run cannot block the queue
 
 
 @dataclass
@@ -76,9 +77,15 @@ class Engine:
         if t is None:
             store.create_team("House Airline", "house", is_house=True, url=url, api_key=key)
             t = store.team_by_slug("house")
+        # The house airline is a reference for the instructor's own runs. It gets no
+        # background traffic unless someone starts it from /admin.
         store.update_team(t["id"], url=url, approved_url=url, api_key=key)
-        if not t["steady"]:
-            store.update_team(t["id"], steady=1)
+        # Earlier versions started house traffic automatically. Switch that off once,
+        # and leave any later start from /admin alone.
+        done, _ = store.get("house_steady_cleared", False)
+        if not done:
+            store.update_team(t["id"], steady=0)
+            store.put("house_steady_cleared", True)
 
     def client_for(self, team: dict, ts: TeamState | None = None) -> TeamClient:
         base = check_url(team["url"], allow_private=bool(team["is_house"]) or DEV)
@@ -121,6 +128,15 @@ class Engine:
         ts.run_rec = Recorder()
         ts.phase = "starting"
         emit = self.emitter(ts, run["test"])
+        # Read the team again now, at the moment the run starts. If the URL changed after the
+        # run was queued, it has to be approved again before Flight Control calls it.
+        team = store.team_by_id(run["team_id"]) or team
+        if not (team["is_house"] or store.url_ready(team)):
+            store.finish_run(run["id"], "failed", 0.0, False,
+                             "URL not approved. Your instructor has to approve your current URL first.", {})
+            ts.run_id = None
+            ts.phase = ""
+            return
         emit("run", text=f"test {run['test']} started")
         try:
             client = self.client_for(team, ts)
@@ -129,8 +145,15 @@ class Engine:
             ts.run_id = None
             return
         try:
-            res = await run_test(run["test"], client, seed=run["seed"], run_tag=f"r{run['id']}",
-                                 emit=emit, rec=ts.run_rec)
+            try:
+                res = await asyncio.wait_for(
+                    run_test(run["test"], client, seed=run["seed"], run_tag=f"r{run['id']}",
+                             emit=emit, rec=ts.run_rec),
+                    timeout=RUN_DEADLINE_S)
+            except asyncio.TimeoutError:
+                res = {"score": 0.0, "gates_ok": False, "failed": True,
+                       "gates": [f"the run did not finish within {RUN_DEADLINE_S // 60:.0f} minutes"],
+                       "summary": f"stopped after {RUN_DEADLINE_S // 60:.0f} minutes"}
             status = "failed" if res.get("failed") else "done"
             store.finish_run(run["id"], status, res.get("score"), res.get("gates_ok"),
                              res.get("summary", ""), res)

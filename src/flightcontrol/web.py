@@ -20,7 +20,7 @@ from pathlib import Path
 import markdown
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -71,51 +71,20 @@ async def security_headers(request: Request, call_next):
     return resp
 
 
-# -- catalog ---------------------------------------------------------------------
+# -- catalog facts shown in the footer ------------------------------------------------
 
 @lru_cache(maxsize=1)
 def _catalog_files() -> dict:
     cat = catalog.get()
-    flights = cat.to_csv().encode()
-    airports = catalog.airports_csv().encode()
-    return {"flights": flights, "airports": airports,
-            "sha256": hashlib.sha256(flights).hexdigest(), "count": len(cat.flights),
+    return {"sha256": hashlib.sha256(cat.to_csv().encode()).hexdigest(), "count": len(cat.flights),
             "routes": len(catalog.routes()), "year": cat.year}
-
-
-@app.get("/catalog/flights.csv")
-def flights_csv():
-    return Response(_catalog_files()["flights"], media_type="text/csv",
-                    headers={"Content-Disposition": "attachment; filename=flights.csv"})
-
-
-@app.get("/catalog/airports.csv")
-def airports_csv():
-    return Response(_catalog_files()["airports"], media_type="text/csv",
-                    headers={"Content-Disposition": "attachment; filename=airports.csv"})
-
-
-# -- public pages ------------------------------------------------------------------
-
-def _airports() -> list[dict]:
-    return [{"code": a.code, "city": a.city, "lat": a.lat, "lon": a.lon, "hub": a.hub}
-            for a in catalog.AIRPORT_BY_CODE.values()]
 
 
 def _page(request: Request, name: str, **ctx) -> HTMLResponse:
     return templates.TemplateResponse(request, name, {"cat": _catalog_files(), **ctx})
 
 
-@app.get("/", response_class=HTMLResponse)
-def live(request: Request):
-    return _page(request, "live.html", airports=_airports(), nav="live")
-
-
-@app.get("/leaderboard", response_class=HTMLResponse)
-def leaderboard(request: Request):
-    rows = [r for r in store.leaderboard() if r["has_runs"] or r["is_house"]]
-    return _page(request, "leaderboard.html", rows=rows, weights=store.WEIGHTS, nav="leaderboard")
-
+# -- the contract is the public site ------------------------------------------------------
 
 @lru_cache(maxsize=1)
 def _contract_html() -> str:
@@ -125,31 +94,14 @@ def _contract_html() -> str:
     return "<p>CONTRACT.md is missing from this deployment.</p>"
 
 
-@app.get("/contract", response_class=HTMLResponse)
-def contract(request: Request):
+@app.get("/", response_class=HTMLResponse)
+def home(request: Request):
     return _page(request, "contract.html", body=_contract_html(), nav="contract")
 
 
-@app.get("/catalog", response_class=HTMLResponse)
-def catalog_page(request: Request):
-    return _page(request, "catalog.html", airports=_airports(), nav="catalog")
-
-
-def _public_team(t: dict) -> dict:
-    keep = ("name", "house", "mode", "phase", "rate", "ok", "bad", "p95_ms", "bookings")
-    return {k: t.get(k) for k in keep}
-
-
-@app.get("/api/live")
-def api_live():
-    snap, updated = store.get("live", {})
-    snap = snap or {}
-    return {"updated": updated, "stale": time.time() - updated > 10,
-            "teams": [_public_team(t) for t in snap.get("teams", [])],
-            "feed": [{k: e.get(k) for k in ("t", "team", "house", "kind", "origin", "destination",
-                                            "pax", "cents", "stops", "text", "test", "date")}
-                     for e in snap.get("feed", []) if e.get("kind") in ("book", "cancel")][-40:],
-            "arcs": snap.get("arcs", []), "bookings_per_min": snap.get("bookings_per_min", 0)}
+@app.get("/contract")
+def contract():
+    return RedirectResponse("/", status_code=301)
 
 
 # -- team pages ------------------------------------------------------------------------
@@ -273,9 +225,12 @@ def admin_page(request: Request, msg: str = "", _: str = Depends(admin)):
     teams = store.teams()
     snap, updated = store.get("live", {})
     live_by_id = {x.get("id"): x for x in (snap or {}).get("teams", [])}
+    official = {r["slug"]: r for r in store.leaderboard(official=True)}
+    practice = {r["slug"]: r for r in store.leaderboard(official=False)}
     return _page(request, "admin.html", teams=teams, runs=store.runs_for(None, 60), live=live_by_id,
+                 official=official, practice=practice, weights=store.WEIGHTS,
                  engine_age=time.time() - updated if updated else None, csrf=_csrf(), msg=msg,
-                 public_url=os.environ.get("FC_PUBLIC_URL", ""))
+                 public_url=os.environ.get("FC_PUBLIC_URL", "").rstrip("/"))
 
 
 def _admin_back(msg: str) -> RedirectResponse:

@@ -7,8 +7,9 @@ against the catalog, and keeps its own record of every booking it was told
 about so it can audit you afterwards.
 
 You run Flight Control on your own computer against your own server on
-`localhost`. The class site at https://flights.enochlev.com runs the same code
-as a demonstration.
+`localhost`. The class site at https://flights.enochlev.com shows this contract
+and gives each team a private page where it can also run the tests through a
+tunnel. Runs on your own machine never show up there.
 
 How you build the system behind the API is up to you. That includes which
 database holds what, how you index it and how you keep it correct under load.
@@ -22,37 +23,44 @@ version 1.0 will be listed at the bottom with a date.
 These steps get a working airline talking to Flight Control in about five
 minutes, so you can see what the traffic looks like before you build anything.
 
-1. Install [uv](https://docs.astral.sh/uv/), then clone this repository and
-   install it.
+**Step 1.** Install [uv](https://docs.astral.sh/uv/), then clone this
+repository and install it.
 
-   ```
-   git clone https://github.com/enochlev/flight-control
-   cd flight-control
-   uv sync
-   ```
+```
+git clone https://github.com/enochlev/flight-control
+cd flight-control
+uv sync
+```
 
-2. Start the toy airline in one terminal. It answers every endpoint in this
-   contract, but it keeps everything in memory with no database. It is a demo,
-   not a starting point.
+**Step 2.** Start the toy airline in one terminal. It answers every endpoint
+in this contract, but it keeps everything in memory with no database. It is a
+demo, not a starting point.
 
-   ```
-   uv run --with fastapi --with uvicorn uvicorn examples.toy_airline:app --port 8080
-   ```
+```
+uv run --with fastapi --with uvicorn uvicorn examples.toy_airline:app --port 8080
+```
 
-3. In a second terminal, run test 1 with `--verbose` to watch every call go by.
+**Step 3.** In a second terminal, run test 1 with `--verbose` to watch every
+call go by.
 
-   ```
-   uv run flightcontrol test --url http://localhost:8080 --key toy-key-123 --test 1 --verbose
-   ```
+```
+uv run flightcontrol test --url http://localhost:8080 --key toy-key-123 --test 1 --verbose
+```
 
-   Each line is one call, its status and how long it took. If your server is
-   not running you will see `connect` instead of a status.
+Each line is one call, its status and how long it took. If your server is not
+running you will see `connect` instead of a status.
 
-4. Try test 4. The toy airline fails it, because a restart wipes everything it
-   kept in memory. Your airline has to pass it.
+**Step 4.** Run test 4 against the toy airline. Its restart endpoint stops the
+process, and nothing starts it again, so the test reports that it never came
+back. Even if something did restart it, every booking it kept in memory would
+be gone. Your airline has to come back on its own with every booking intact.
 
-5. Build your own airline that serves the same endpoints, start it on a port,
-   and point `--url` at it.
+```
+uv run flightcontrol test --url http://localhost:8080 --key toy-key-123 --test 4
+```
+
+**Step 5.** Build your own airline that serves the same endpoints, start it on
+a port, and point `--url` at it.
 
 ## A worked example
 
@@ -86,24 +94,25 @@ given back by the cancel.
 - Bodies are JSON. Times are UTC in ISO 8601 with a `Z`, for example
   `2027-03-15T14:05:00Z`. Dates are `YYYY-MM-DD`. Money is integer cents.
 - Errors return a JSON body `{"error": "<code>", "detail": "<text>"}` with the
-  status codes given below.
+  status codes given below. A request with a missing field or a field of the
+  wrong type returns `422`.
 - Every response must include a `Server-Timing` header with your handling
-  time, for example `Server-Timing: app;dur=12.4` (milliseconds). The
-  leaderboard scores this number so that tunnel and Wi-Fi delay do not count
-  against you. Flight Control also measures the full round trip and will flag
-  numbers that do not add up.
+  time, for example `Server-Timing: app;dur=12.4` (milliseconds). Test 2
+  scores this number so that tunnel and Wi-Fi delay do not count against you.
 - Flight Control waits at most 2 seconds for a response. A request that times
   out is treated as **unknown**, not failed. Flight Control will retry unknown
   bookings with the same idempotency key before it audits you.
+- If `Server-Timing` is missing, or reports more time than the whole round
+  trip took, Flight Control uses the round trip instead. Every call, including
+  a repeated booking, adds its time to the traveler's total.
 - Do not rate limit Flight Control.
 - Keep bookings, holds and seat counts in a database. Anything kept only in
   your application's memory is gone after a restart, and test 4 checks for it.
 
 ## The catalog
 
-Download it from Flight Control (`/catalog/flights.csv` and
-`/catalog/airports.csv`). It holds every scheduled flight for 2027 across 15
-airports. Columns are listed below.
+The catalog holds every scheduled flight for 2027 across 15 airports, all
+flown by your one airline. Columns are listed below.
 
 | column | meaning |
 |---|---|
@@ -116,8 +125,10 @@ airports. Columns are listed below.
 | `base_fare_cents` | a reference fare per passenger |
 | `distance_mi` | great circle miles |
 
-Write it out with `uv run flightcontrol catalog --out catalog`. The catalog
-does not change during the term.
+Write it out with `uv run flightcontrol catalog --out catalog`. That writes
+`catalog/flights.csv` and `catalog/airports.csv`, and prints the number of
+flights (175,224) and the file's SHA-256 hash. Every computer produces the same
+file, and the catalog does not change during the term.
 
 Planes are small on purpose, between 10 and 23 seats. The tests send a few
 thousand travelers at a time, and at this size some flights sell out during a
@@ -192,7 +203,7 @@ starts. Flight Control uses it to confirm that a restart really happened.
   The catalog's `base_fare_cents` is a sensible default, summed over the
   flights in the itinerary.
 - `seats_available` is the smallest value across the itinerary's flights.
-  It may be a few seconds stale. Holds are where it has to be exact.
+  It may be up to 5 seconds stale. Holds are where it has to be exact.
 - Unknown airports or a bad date return `422`.
 
 ### `POST /holds`
@@ -245,8 +256,10 @@ A successful booking answers `201` with this body.
   `tok_decline_` fail with `402`, and the hold is released.
 - An expired or unknown hold returns `410`. A hold can be booked once.
 - **Idempotency.** The same `idempotency_key` with the same body must return
-  the same booking (status `200` or `201`) and must never create a second
-  one. This includes two copies arriving at the same moment. The same key
+  the same answer as the first time and must never create a second booking.
+  This includes two copies arriving at the same moment. A repeat of a
+  successful booking may answer `200` or `201`. Return the answer exactly as
+  you first sent it, even if the booking was cancelled since. The same key
   with a different body returns `422`. Keep keys for at least 24 hours.
 
 ### `GET /bookings/{booking_id}`
@@ -271,14 +284,21 @@ These exist so Flight Control can audit you.
  "revenue_cents": 51200400, "active_holds": 12, "seats_held": 19}
 ```
 
-Revenue counts confirmed bookings only.
+Revenue counts confirmed bookings only. `seats_sold` here counts passengers
+in confirmed bookings, so a passenger on a connection counts once.
+`seats_held` counts passengers in holds that have not expired.
 
 `GET /admin/flights/{flight_id}`
 
 ```json
-{"flight_id": "...", "capacity": 126, "seats_sold": 40, "seats_held": 2,
- "seats_available": 84}
+{"flight_id": "...", "capacity": 16, "seats_sold": 9, "seats_held": 2,
+ "seats_available": 5}
 ```
+
+Here `seats_sold` and `seats_held` count passengers on this one flight, so a
+passenger on a connection counts once on each of its two flights. All three
+numbers must be whole numbers, and `seats_available` must equal `capacity`
+minus `seats_sold` minus `seats_held`.
 
 `GET /admin/bookings?offset=0&limit=500` returns
 `{"total": 952, "bookings": [...]}` with every booking, confirmed and
@@ -292,8 +312,11 @@ graded test.
 process must exit without a clean shutdown, as if the power went out, and
 start again on its own (a Docker restart policy does this). Stay down for
 about 30 seconds and be healthy again within 60 seconds of the request, with a
-new `boot_id`. Keep your tunnel running while the app restarts.
-Every booking you confirmed before the restart must still be there after it.
+new `boot_id`. Flight Control checks `/health` every second, and it has to see
+your server down at least once, so a new `boot_id` without going down does not
+count. Keep your tunnel running while the app restarts.
+Every booking you confirmed before the restart must still be there after it,
+with the same status, flights, passengers and total.
 Whether your database also crashes, and how it recovers, is something you
 explain in your paper and the instructor checks by hand.
 
@@ -314,17 +337,26 @@ gets chosen only when it is cheap enough to make up for it.
 Tests 2, 4 and 5 send every traveler to flights on one travel day, so
 popular flights fill up and later travelers have to take their second choice.
 
+A traveler is **correct** when every call it made got an answer (no timeout
+and no 5xx), none of your answers broke a rule in this contract, and its whole
+trip took under 5 seconds. A sold-out answer or a declined payment is a
+correct outcome when it is the right answer. When Flight Control sends the
+same booking twice, both copies need the same answer, either both the
+booking or both the same error. Cancellations happen a
+little later, so they are checked by the audit rather than counted against
+the traveler. Each failed traveler is reported with its reason.
+
 | Test | What happens | Must hold (otherwise the test scores 0) | Score from 0 to 1 |
 |---|---|---|---|
 | 1 Steady | 1 traveler per second, always on while you are connected | nothing, it is for watching | not scored |
-| 2 Rush | travelers per second step up 5, 10, 20, 30, 40, 30 seconds each step | no oversell, no partial itinerary | highest step with 95% of travelers correct and p95 `Server-Timing` under 500 ms, divided by 40 |
+| 2 Rush | travelers per second step up 5, 10, 20, 30, 40, 30 seconds each step | no oversell, no partial itinerary | highest step where 95% of travelers are correct and the p95 of each correct traveler's server time, added up over its calls, is under 500 ms. Divided by 40 |
 | 3 Last seat | 10 rounds. A flight is filled to within 1 to 3 seats, then 40 travelers try to book it at once | exactly the remaining seats sold, every loser gets `409` | rounds passed divided by 10 |
 | 4 Restart | 5 travelers per second for 3 minutes, restart called at 60 seconds | every confirmed booking still there, new `boot_id`, healthy within 60 seconds | fraction of travelers correct after you come back |
-| 5 Audit | 10 travelers per second for 3 minutes with duplicate requests, cancellations, declined payments and abandoned holds, then a 70 second drain | stats, per-flight seats and the booking export all match Flight Control's record exactly | 1 if everything matches |
+| 5 Audit | 10 travelers per second for 3 minutes with duplicate requests, cancellations, declined payments and abandoned holds, then a 70 second drain | no answer breaks a rule, at least 95% of travelers correct, at least 100 bookings made, and stats, per-flight seats and the booking export all match Flight Control's record exactly | 1 if everything holds |
 
-Leaderboard score is `40 x rush + 20 x last seat + 20 x restart + 20 x audit`.
-It uses your best of your last three runs of each test. Hidden tests use the
-same rules with different flights, seeds and timing.
+Each test gives a score from 0 to 1, and the project assignment says how the
+scores count toward your grade. Hidden tests use the same rules with different
+flights, seeds and timing.
 
 ## Running the tests yourself
 
@@ -332,9 +364,13 @@ same rules with different flights, seeds and timing.
 uv run flightcontrol test --url http://localhost:8080 --key <your key> --test 3
 ```
 
-Add `--verbose` to print every call, or `--json` for the full result. Test 1
-runs for two minutes unless you pass `--minutes`.
+At the end it prints the score, every rule that failed, why travelers failed,
+and examples. Add `--verbose` to print every call, or `--json` to print only
+the full result as JSON. Test 1 runs for two minutes unless you pass
+`--minutes`.
 
 ## Changes
 
-- Oct 29 2026, version 1.0 published.
+- Oct 29 2026, version 1.0 published. Later the same day the rules for a
+  correct traveler, the Audit and Restart pass conditions, seat counting and
+  repeated bookings were written out in full.

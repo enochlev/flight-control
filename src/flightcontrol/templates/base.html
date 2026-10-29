@@ -14,15 +14,13 @@
 <header class="top">
   <a class="brand" href="/"><span class="dot"></span>Flight Control</a>
   <nav>
-    <a href="/" class="{{ 'on' if nav == 'live' }}">Live</a>
-    <a href="/leaderboard" class="{{ 'on' if nav == 'leaderboard' }}">Leaderboard</a>
-    <a href="/contract" class="{{ 'on' if nav == 'contract' }}">Contract</a>
-    <a href="/catalog" class="{{ 'on' if nav == 'catalog' }}">Catalog</a>
+    <a href="/" class="{{ 'on' if nav == 'contract' }}"{% if nav == 'contract' %} aria-current="page"{% endif %}>Contract</a>
+    <a href="https://github.com/enochlev/flight-control">Code on GitHub</a>
   </nav>
   <span class="spacer"></span>
   <span class="course">COMP 4340/6340 at NNU</span>
 </header>
 {% block body %}{% endblock %}
-<footer>Flight Control sends simulated travelers to each team's airline and checks every answer. Catalog {{ cat.year }}, {{ "{:,}".format(cat.count) }} flights.</footer>
+<footer>Flight Control sends simulated travelers to each team's airline and checks every answer. Catalog {{ cat.year }}, {{ "{:,}".format(cat.count) }} flights, sha256 {{ cat.sha256[:12] }}.</footer>
 </body>
 </html>

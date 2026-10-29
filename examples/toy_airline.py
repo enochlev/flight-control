@@ -133,7 +133,7 @@ async def book(request: Request):
                    "passengers": body["passengers"], "total_cents": hold["total_cents"], "created_at": iso(now())}
         bookings[booking["booking_id"]] = booking
         status, reply = 201, booking
-    replies[key] = (body, status, reply)
+    replies[key] = (body, status, dict(reply))  # a copy, so a later cancel does not change it
     return JSONResponse(reply, status_code=status)
 
 

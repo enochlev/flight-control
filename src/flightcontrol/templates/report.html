@@ -16,12 +16,21 @@
     </div>
     <p style="margin-bottom:0">{{ run.summary }}</p>
     {% if r.gates %}<ul class="no">{% for g in r.gates %}<li>{{ g }}</li>{% endfor %}</ul>{% endif %}
+    <p class="small muted" style="margin-bottom:0">Scores run from 0 to 1. A traveler is correct when every call got an answer, no rule was broken and the whole trip took under 5 seconds.</p>
   </section>
+
+  {% if r.failed_because %}
+  <h2>Why travelers failed</h2>
+  <div class="card table-wrap"><table>
+    <thead><tr><th>Reason</th><th class="num">Travelers</th></tr></thead>
+    <tbody>{% for k, n in r.failed_because.items() %}<tr><td>{{ k }}</td><td class="num">{{ n }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% endif %}
 
   {% if r.steps %}
   <h2>Steps</h2>
   <div class="card table-wrap"><table>
-    <thead><tr><th class="num">Travelers per second</th><th class="num">Travelers</th><th class="num">Correct</th><th class="num">p95 server ms</th><th>Passed</th></tr></thead>
+    <thead><tr><th class="num">Travelers per second</th><th class="num">Travelers</th><th class="num">Correct</th><th class="num">p95 server ms per traveler, calls added up</th><th>Passed</th></tr></thead>
     <tbody>{% for s in r.steps %}<tr><td class="num">{{ s.rate }}</td><td class="num">{{ s.travelers }}</td><td class="num">{{ s.correct | pct }}</td><td class="num">{{ s.p95_server_ms }}</td><td class="{{ 'ok' if s.passed else 'no' }}">{{ "yes" if s.passed else "no" }}</td></tr>{% endfor %}</tbody>
   </table></div>
   {% endif %}
@@ -46,13 +55,18 @@
   </div>
   {% endif %}
 
+  {% if r.flight_mismatches %}
+  <h2>Seat counts that do not match</h2>
+  <div class="card"><ul class="mono small">{% for m in r.flight_mismatches %}<li>{{ m }}</li>{% endfor %}</ul></div>
+  {% endif %}
+
   {% if r.mismatches %}
   <h2>Audit mismatches</h2>
   <div class="card"><ul class="mono small">{% for m in r.mismatches %}<li>{{ m }}</li>{% endfor %}</ul></div>
   {% endif %}
 
   {% if r.violations %}
-  <h2>Problems seen during the run</h2>
+  <h2>Rules broken during the run</h2>
   <div class="card table-wrap"><table>
     <thead><tr><th>Problem</th><th class="num">Count</th><th>Examples</th></tr></thead>
     <tbody>{% for k, v in r.violations.items() %}<tr><td>{{ k }}</td><td class="num">{{ v.count }}</td><td class="mono small">{% for e in v.examples %}{{ e }}<br>{% endfor %}</td></tr>{% endfor %}</tbody>
@@ -62,7 +76,7 @@
   {% if r.ops %}
   <h2>Per endpoint</h2>
   <div class="card table-wrap"><table>
-    <thead><tr><th>Call</th><th class="num">Count</th><th class="num">p95 round trip ms</th><th class="num">p95 server ms</th><th>Status codes</th></tr></thead>
+    <thead><tr><th>Call</th><th class="num">Count</th><th class="num">p95 round trip ms per call</th><th class="num">p95 server ms per call</th><th>Status codes</th></tr></thead>
     <tbody>{% for op, s in r.ops.items() %}<tr><td>{{ op }}</td><td class="num">{{ s.n }}</td><td class="num">{{ s.p95_rtt_ms }}</td><td class="num">{{ s.p95_server_ms }}</td>
       <td class="mono small">{% for c, n in s.codes.items() %}{{ c }} {{ n }}{% if not loop.last %}, {% endif %}{% endfor %}</td></tr>{% endfor %}</tbody>
   </table></div>
