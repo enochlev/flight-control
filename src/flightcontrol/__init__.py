@@ -66,7 +66,8 @@ def _cmd_test(args: argparse.Namespace) -> int:
     if res.get("score") is not None:
         print(f"Score {res['score']:.2f} out of 1.00. Rules {'kept' if res.get('gates_ok') else 'BROKEN'}.")
     trav, ok = res.get("travelers", 0), res.get("travelers_ok", 0)
-    print(f"{ok} of {trav} travelers correct.")
+    if trav:
+        print(f"{ok} of {trav} travelers correct.")
     for g in res.get("gates", []):
         print(f"  FAILED: {g}")
     for s in res.get("steps", []):
