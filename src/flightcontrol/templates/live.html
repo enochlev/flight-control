@@ -2,8 +2,8 @@
 {% block title %}Flight Control{% endblock %}
 {% block body %}
 <main>
-  <h1>Live traffic</h1>
-  <p class="lede">Every arc is a booking that just went through. Orange arcs are student airlines and blue arcs are the house airline, which runs all the time.</p>
+  <h1>Live bookings</h1>
+  <p class="lede">Every arc is a booking that just went through, drawn from where the trip starts to where it ends. The flights themselves leave on future dates in 2027. Orange arcs are student airlines and blue arcs are the house airline, which runs all the time.</p>
   <div class="grid live-grid">
     <section class="card">
       <div class="stats">
@@ -31,5 +31,5 @@
   </div>
 </main>
 <script>window.AIRPORTS = {{ airports | tojson }};</script>
-<script src="/static/live.js?v=4"></script>
+<script src="/static/live.js?v=5"></script>
 {% endblock %}

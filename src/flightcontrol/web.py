@@ -147,7 +147,7 @@ def api_live():
     return {"updated": updated, "stale": time.time() - updated > 10,
             "teams": [_public_team(t) for t in snap.get("teams", [])],
             "feed": [{k: e.get(k) for k in ("t", "team", "house", "kind", "origin", "destination",
-                                            "pax", "cents", "stops", "text", "test")}
+                                            "pax", "cents", "stops", "text", "test", "date")}
                      for e in snap.get("feed", []) if e.get("kind") in ("book", "cancel")][-40:],
             "arcs": snap.get("arcs", []), "bookings_per_min": snap.get("bookings_per_min", 0)}
 

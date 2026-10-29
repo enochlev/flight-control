@@ -45,6 +45,7 @@ class TeamState:
     error: str = ""
     bookings: int = 0
     extra: dict = field(default_factory=dict)
+    calls: deque = field(default_factory=lambda: deque(maxlen=100))
 
 
 class Engine:
@@ -79,9 +80,14 @@ class Engine:
         if not t["steady"]:
             store.update_team(t["id"], steady=1)
 
-    def client_for(self, team: dict) -> TeamClient:
+    def client_for(self, team: dict, ts: TeamState | None = None) -> TeamClient:
         base = check_url(team["url"], allow_private=bool(team["is_house"]) or DEV)
-        return TeamClient(base, team["api_key"])
+        on_call = None
+        if ts is not None:
+            def on_call(method: str, path: str, r) -> None:
+                ts.calls.append({"t": time.time(), "m": method, "p": path[:120], "s": r.status,
+                                 "ms": round(r.rtt_ms, 1), "e": r.error})
+        return TeamClient(base, team["api_key"], on_call=on_call)
 
     # -- steady traffic ------------------------------------------------------------
 
@@ -91,7 +97,7 @@ class Engine:
         rate = HOUSE_RATE if team["is_house"] else STEADY_RATE
         while not ts.steady_stop:
             try:
-                client = self.client_for(team)
+                client = self.client_for(team, ts)
             except UnsafeURL as e:
                 ts.error = str(e)
                 await asyncio.sleep(30)
@@ -117,7 +123,7 @@ class Engine:
         emit = self.emitter(ts, run["test"])
         emit("run", text=f"test {run['test']} started")
         try:
-            client = self.client_for(team)
+            client = self.client_for(team, ts)
         except UnsafeURL as e:
             store.finish_run(run["id"], "failed", 0.0, False, f"URL refused: {e}", {})
             ts.run_id = None
@@ -184,6 +190,7 @@ class Engine:
             elif s.steady_rec:
                 detail = {"violations": dict(s.steady_rec.violations.most_common(8)),
                           "examples": {k: v[:2] for k, v in s.steady_rec.examples.items()}}
+            detail["calls"] = list(s.calls)[-40:]
             teams.append({"id": tid, "slug": s.slug, "name": s.name, "house": s.is_house, "mode": mode,
                           "phase": s.phase, "error": s.error, "rate": win["rate"], "ok": win["ok"],
                           "bad": win["bad"], "p95_ms": lat, "bookings": s.bookings, "detail": detail})

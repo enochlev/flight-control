@@ -24,7 +24,7 @@ def test_catalog_shape(cat):
     assert len(ids) == len(set(ids))
     for f in cat.flights[:2000]:
         assert f.arrival > f.departure
-        assert f.capacity in (76, 126, 162, 186)
+        assert f.capacity in (10, 16, 20, 23)
 
 
 def test_origin_local_date_is_local(cat):

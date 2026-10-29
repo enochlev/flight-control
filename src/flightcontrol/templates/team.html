@@ -48,6 +48,15 @@
     <p class="small muted" style="margin-bottom:0">{{ practice_left }} runs left in the last 24 hours. Each graded test resets your airline first, so do not run one while you are demoing. The rules for every test are on the <a href="/contract">contract</a> page.</p>
   </section>
 
+  <h2>Calls to your airline</h2>
+  <p class="small muted">The last calls Flight Control made to your server, newest first. A status of connect or timeout means your server did not answer.</p>
+  <div class="card table-wrap">
+    <table class="small">
+      <thead><tr><th>Time</th><th>Call</th><th class="num">Status</th><th class="num">ms</th></tr></thead>
+      <tbody id="calls"><tr><td colspan="4" class="empty">No calls yet. Start test 1 to see them.</td></tr></tbody>
+    </table>
+  </div>
+
   <h2>Your runs</h2>
   <div class="card table-wrap">
     <table>
@@ -88,6 +97,25 @@
         if (t.error) text += " " + t.error;
       }
       box.textContent = text;
+      const calls = (t && t.detail && t.detail.calls) || [];
+      if (calls.length) {
+        const body = document.getElementById("calls");
+        body.replaceChildren();
+        for (const c of calls.slice().reverse().slice(0, 25)) {
+          const tr = document.createElement("tr");
+          const ok = c.s >= 200 && c.s < 300;
+          const cells = [new Date(c.t * 1000).toLocaleTimeString([], {hour12: false}), `${c.m} ${c.p}`,
+                         c.s || (c.e || "error").split(":")[0], c.ms];
+          cells.forEach((v, k) => {
+            const td = document.createElement("td");
+            td.textContent = v;
+            if (k === 1) td.className = "mono";
+            if (k >= 2) td.className = "num" + (k === 2 && !ok && !(c.s === 409 || c.s === 402) ? " no" : "");
+            tr.append(td);
+          });
+          body.append(tr);
+        }
+      }
       if (wasActive && !s.active) location.reload();
       wasActive = !!s.active;
     } catch (e) { }

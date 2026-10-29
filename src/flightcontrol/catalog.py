@@ -102,13 +102,19 @@ def block_minutes(dist: int) -> int:
 
 
 def capacity_for(dist: int) -> int:
+    """Seats for sale on one flight.
+
+    Deliberately about one eighth of a real aircraft. The tests send a few
+    thousand travelers at one travel day, and at this size roughly one flight in
+    five sells out while almost every traveler still finds a seat.
+    """
     if dist < 450:
-        return 76
+        return 10
     if dist < 1100:
-        return 126
+        return 16
     if dist < 2000:
-        return 162
-    return 186
+        return 20
+    return 23
 
 
 def fare_for(dist: int) -> int:

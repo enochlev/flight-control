@@ -18,7 +18,7 @@ from .client import Resp, TeamClient
 
 HOLD_TTL_S = 60.0
 TRAVELER_DEADLINE_S = 5.0
-SLACK = 10  # seats of margin before Flight Control calls a sold-out answer wrong
+SLACK = 3  # seats of margin before Flight Control calls a sold-out answer wrong
 
 FIRST = ["Ada", "Ben", "Cora", "Dev", "Eli", "Fay", "Gus", "Hana", "Ivan", "June", "Kai",
          "Lena", "Milo", "Nora", "Omar", "Pia", "Quinn", "Rosa", "Sam", "Tara", "Uma",
@@ -206,7 +206,7 @@ class Request:
     destination: str
     day: date
     pax: int
-    prefer: str        # cheapest | earliest | fewest
+    kind: str          # leisure | business
 
 
 class Demand:
@@ -231,8 +231,8 @@ class Demand:
         a, b = rng.choices(self._pairs, self._weights)[0]  # type: ignore[arg-type]
         day = start + timedelta(days=rng.randrange(span_days))
         pax = rng.choices([1, 2, 3, 4, 5, 6], [55, 25, 10, 5, 3, 2])[0]
-        prefer = rng.choices(["cheapest", "earliest", "fewest"], [50, 25, 25])[0]
-        return Request(a, b, day, pax, prefer)
+        kind = rng.choices(["leisure", "business"], [70, 30])[0]
+        return Request(a, b, day, pax, kind)
 
 
 @dataclass
@@ -327,12 +327,22 @@ def validate_search(ctx: Context, req: Request, r: Resp) -> list[dict]:
     return good
 
 
-def choose(its: list[dict], prefer: str) -> dict:
-    if prefer == "cheapest":
-        return min(its, key=lambda i: (i["price_cents"], i["itinerary_id"]))
-    if prefer == "earliest":
-        return min(its, key=lambda i: (str(i.get("departure")), i["itinerary_id"]))
-    return min(its, key=lambda i: (len(i["itinerary_id"].split("+")), str(i.get("arrival")), i["itinerary_id"]))
+# What an hour and a connection are worth to a traveler, in dollars.
+VALUE_OF_HOUR = {"leisure": 15.0, "business": 75.0}
+CONNECTION_COST = {"leisure": 60.0, "business": 150.0}
+
+
+def trip_cost(cat: Catalog, it: dict, kind: str) -> float:
+    """Price per passenger plus the traveler's cost of time and connections, in dollars."""
+    legs = [cat.by_id[f] for f in it["itinerary_id"].split("+")]
+    hours = (legs[-1].arrival - legs[0].departure).total_seconds() / 3600
+    return it["price_cents"] / 100 + VALUE_OF_HOUR[kind] * hours + CONNECTION_COST[kind] * (len(legs) - 1)
+
+
+def choose(cat: Catalog, its: list[dict], req: "Request") -> dict:
+    """The itinerary with the lowest total cost to this traveler. A long or
+    connecting trip wins only when it is cheap enough to make up for the time."""
+    return min(its, key=lambda i: (trip_cost(cat, i, req.kind), i["itinerary_id"]))
 
 
 async def traveler(ctx: Context, req: Request, mix: Mix, tag: Any = None) -> TravelerResult:
@@ -363,7 +373,7 @@ async def traveler(ctx: Context, req: Request, mix: Mix, tag: Any = None) -> Tra
     if not its or ctx.rng.random() >= mix.p_hold:
         return done(True)
 
-    pick = choose(its, req.prefer)
+    pick = choose(ctx.cat, its, req)
     legs = pick["itinerary_id"].split("+")
     r = await ctx.client.call("POST", "/holds", json={"itinerary_id": pick["itinerary_id"], "passengers": req.pax})
     ctx.rec.op("hold", r)
@@ -418,7 +428,7 @@ async def traveler(ctx: Context, req: Request, mix: Mix, tag: Any = None) -> Tra
         ctx.ledger.confirm(Booked(b["booking_id"], body["idempotency_key"], pick["itinerary_id"],
                                   legs, req.pax, int(total or 0)))
         ctx.emit("book", origin=req.origin, destination=req.destination, pax=req.pax,
-                 cents=total, stops=len(legs) - 1)
+                 cents=total, stops=len(legs) - 1, date=req.day.isoformat())
         if ctx.rng.random() < mix.p_cancel:
             ctx.spawn(_cancel_later(ctx, b["booking_id"], mix))
         return done(True)

@@ -22,7 +22,11 @@ def _cmd_test(args: argparse.Namespace) -> int:
             print(f"[{time.time() - t0:6.1f}s] {d.get('text', '')}", flush=True)
 
     async def go() -> dict:
-        client = TeamClient(base, args.key)
+        def show(method: str, path: str, r) -> None:
+            status = r.status or r.error
+            print(f"  {method:6s} {path[:70]:70s} {status!s:>8}  {r.rtt_ms:7.1f} ms", flush=True)
+
+        client = TeamClient(base, args.key, on_call=show if args.verbose else None)
         rec = Recorder()
         stop_at = time.time() + args.minutes * 60 if args.test == 1 else None
 
@@ -75,6 +79,7 @@ def main() -> None:
     t.add_argument("--seed", type=int, default=4340)
     t.add_argument("--minutes", type=float, default=2.0, help="how long test 1 runs")
     t.add_argument("--json", action="store_true", help="print the full result as JSON")
+    t.add_argument("--verbose", "-v", action="store_true", help="print every call Flight Control makes")
     c = sub.add_parser("catalog", help="write the flight catalog CSV files")
     c.add_argument("--out", default=".")
     a = sub.add_parser("add-team", help="create a team and print its private link")

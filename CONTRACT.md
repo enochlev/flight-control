@@ -1,14 +1,82 @@
 # Flight Control API contract, version 1.0
 
-This is the API your airline must serve. Flight Control plays the part of
-thousands of travelers. It calls these endpoints on your server through your
-tunnel, and it keeps its own record of every booking it was told about.
+You are building the reservation system for one airline. Its whole schedule
+is in the catalog below. Flight Control plays the part of thousands of
+travelers. It calls these endpoints on your server, checks every answer
+against the catalog, and keeps its own record of every booking it was told
+about so it can audit you afterwards.
+
+You run Flight Control on your own computer against your own server on
+`localhost`. The class site at https://flights.enochlev.com runs the same code
+as a demonstration.
+
 How you build the system behind the API is up to you. That includes which
 database holds what, how you index it and how you keep it correct under load.
 
 Anything not written here is your decision. If something here is unclear,
 ask in class or on Canvas before you build around a guess. Changes after
 version 1.0 will be listed at the bottom with a date.
+
+## Getting started
+
+These steps get a working airline talking to Flight Control in about five
+minutes, so you can see what the traffic looks like before you build anything.
+
+1. Install [uv](https://docs.astral.sh/uv/), then clone this repository and
+   install it.
+
+   ```
+   git clone https://github.com/enochlev/flight-control
+   cd flight-control
+   uv sync
+   ```
+
+2. Start the toy airline in one terminal. It answers every endpoint in this
+   contract, but it keeps everything in memory with no database. It is a demo,
+   not a starting point.
+
+   ```
+   uv run --with fastapi --with uvicorn uvicorn examples.toy_airline:app --port 8080
+   ```
+
+3. In a second terminal, run test 1 with `--verbose` to watch every call go by.
+
+   ```
+   uv run flightcontrol test --url http://localhost:8080 --key toy-key-123 --test 1 --verbose
+   ```
+
+   Each line is one call, its status and how long it took. If your server is
+   not running you will see `connect` instead of a status.
+
+4. Try test 4. The toy airline fails it, because a restart wipes everything it
+   kept in memory. Your airline has to pass it.
+
+5. Build your own airline that serves the same endpoints, start it on a port,
+   and point `--url` at it.
+
+## A worked example
+
+One traveler, start to finish. Every request also carries the
+`Authorization` header.
+
+```
+GET /search?origin=BOI&destination=JFK&date=2027-03-15&passengers=2
+  200  {"itineraries": [{"itinerary_id": "FC160-20270315+FC263-20270315", "price_cents": 38000,
+                         "seats_available": 9, ...}, ...]}
+
+POST /holds  {"itinerary_id": "FC160-20270315+FC263-20270315", "passengers": 2}
+  201  {"hold_id": "h_81c2", "total_cents": 76000, "expires_at": "...", ...}
+
+POST /bookings  {"hold_id": "h_81c2", "passengers": [{"name": "Ada Park"}, {"name": "Lee Park"}],
+                 "payment_token": "tok_ok_5521", "idempotency_key": "fc-7d2e"}
+  201  {"booking_id": "b_1a9f", "status": "confirmed", ...}
+
+DELETE /bookings/b_1a9f
+  200  {"booking_id": "b_1a9f", "status": "cancelled", ...}
+```
+
+Two seats were taken on both flights by the hold, sold by the booking, and
+given back by the cancel.
 
 ## Basics
 
@@ -28,6 +96,8 @@ version 1.0 will be listed at the bottom with a date.
   out is treated as **unknown**, not failed. Flight Control will retry unknown
   bookings with the same idempotency key before it audits you.
 - Do not rate limit Flight Control.
+- Keep bookings, holds and seat counts in a database. Anything kept only in
+  your application's memory is gone after a restart, and test 4 checks for it.
 
 ## The catalog
 
@@ -46,12 +116,19 @@ airports. Columns are listed below.
 | `base_fare_cents` | a reference fare per passenger |
 | `distance_mi` | great circle miles |
 
-The catalog does not change during the term. Its version and SHA-256 hash are
-shown on Flight Control's front page.
+Write it out with `uv run flightcontrol catalog --out catalog`. The catalog
+does not change during the term.
+
+Planes are small on purpose, between 10 and 23 seats. The tests send a few
+thousand travelers at a time, and at this size some flights sell out during a
+test while most travelers still find a seat. Load `capacity` exactly as it is.
+Flight Control compares the capacity you report on `/admin/flights` with the
+catalog.
 
 ## Itineraries
 
-An itinerary is one flight (nonstop) or two flights (one stop).
+An itinerary is one flight (nonstop) or two flights (one stop). There are
+never two stops, in Project 2 or Project 3.
 
 - The first flight leaves the requested origin on the requested
   `origin_local_date`.
@@ -112,11 +189,20 @@ starts. Flight Control uses it to confirm that a restart really happened.
   exist, return all of them.
 - Every nonstop with room must be included.
 - `price_cents` is per passenger and is your choice. It may change over time.
+  The catalog's `base_fare_cents` is a sensible default, summed over the
+  flights in the itinerary.
 - `seats_available` is the smallest value across the itinerary's flights.
   It may be a few seconds stale. Holds are where it has to be exact.
 - Unknown airports or a bad date return `422`.
 
 ### `POST /holds`
+
+A hold is what an airline website does while you type in names and payment.
+The seats are set aside for you for a short time so nobody else can take
+them, but nothing is sold yet. If the payment fails or the traveler walks
+away, the hold runs out and the seats go back on sale. This is where two
+travelers racing for the last seat meet, so it is where your locking has to
+be right.
 
 Request `{"itinerary_id": "...", "passengers": 2}` with 1 to 9 passengers.
 
@@ -218,6 +304,16 @@ sometimes holds, then sometimes books, and sometimes cancels later. The mix
 and rates for each test are below. Arrivals follow a fixed schedule. If your
 server falls behind, Flight Control does not slow down for you.
 
+Travelers pick from what your search returns the way people do. Each one
+weighs the price against the time the trip takes and the hassle of a
+connection. About 70 percent are leisure travelers, who value an hour at about
+$15 and a connection at about $60. The rest are business travelers, who value
+an hour at about $75 and a connection at about $150. So a long connecting trip
+gets chosen only when it is cheap enough to make up for it.
+
+Tests 2, 4 and 5 send every traveler to flights on one travel day, so
+popular flights fill up and later travelers have to take their second choice.
+
 | Test | What happens | Must hold (otherwise the test scores 0) | Score from 0 to 1 |
 |---|---|---|---|
 | 1 Steady | 1 traveler per second, always on while you are connected | nothing, it is for watching | not scored |
@@ -232,13 +328,13 @@ same rules with different flights, seeds and timing.
 
 ## Running the tests yourself
 
-The same engine runs on your own machine against `localhost`, so you do not
-need the tunnel while you build.
-
 ```
 uv run flightcontrol test --url http://localhost:8080 --key <your key> --test 3
 ```
 
+Add `--verbose` to print every call, or `--json` for the full result. Test 1
+runs for two minutes unless you pass `--minutes`.
+
 ## Changes
 
-None yet.
+- Oct 29 2026, version 1.0 published.

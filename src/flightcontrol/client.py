@@ -79,8 +79,9 @@ class Resp:
 
 class TeamClient:
     def __init__(self, base_url: str, api_key: str, *, max_connections: int = 64,
-                 timeout: float = TIMEOUT_S) -> None:
+                 timeout: float = TIMEOUT_S, on_call=None) -> None:
         self.base_url = base_url.rstrip("/")
+        self.on_call = on_call  # called with (method, path, Resp) after every request
         self._client = httpx.AsyncClient(
             base_url=self.base_url,
             headers={"Authorization": f"Bearer {api_key}", "User-Agent": USER_AGENT},
@@ -95,6 +96,19 @@ class TeamClient:
 
     async def call(self, method: str, path: str, *, json: Any = None,
                    params: dict | None = None, timeout: float | None = None) -> Resp:
+        r = await self._call(method, path, json=json, params=params, timeout=timeout)
+        if self.on_call is not None:
+            shown = path
+            if params:
+                shown += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+            try:
+                self.on_call(method, shown, r)
+            except Exception:
+                pass
+        return r
+
+    async def _call(self, method: str, path: str, *, json: Any = None,
+                    params: dict | None = None, timeout: float | None = None) -> Resp:
         t0 = time.perf_counter()
         try:
             kw: dict[str, Any] = {"json": json, "params": params}

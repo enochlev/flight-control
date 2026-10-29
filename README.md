@@ -14,36 +14,29 @@ checks every answer against its own record of what happened.
 Read [CONTRACT.md](CONTRACT.md) first. It is the whole specification. How you
 build the airline behind it is up to you.
 
-You can run any of the five tests against your own machine while you build,
-without a tunnel and without waiting for the shared server.
+Start with the Getting started section of the contract. It runs a small toy
+airline from `examples/` and shows Flight Control calling it, one line per
+call, so you can see the whole loop work before you write anything.
+
+You run every test on your own machine against your own server on
+`localhost`.
 
 ```
 git clone https://github.com/enochlev/flight-control
 cd flight-control
 uv sync
-uv run flightcontrol catalog --out catalog
-uv run flightcontrol test --url http://localhost:8080 --key <your key> --test 1
+uv run flightcontrol test --url http://localhost:8080 --key <your key> --test 1 --verbose
 ```
 
-`--test` takes 1 to 5. Test 1 runs for two minutes unless you pass
-`--minutes`. Add `--json` for the full result. The tests on the shared site
-use the same code with different seeds, so a local pass is a good sign but not
-a promise.
-
-On Windows, Docker Desktop's port forwarding slows down above about 30
-travelers per second, which makes test 2 look worse than your server is. For
-test 2, run Flight Control inside Docker on the same network as your airline.
-
-```
-docker build -t flightcontrol .
-docker run --rm --network <your compose network> flightcontrol flightcontrol test --url http://<your api service>:8080 --key <your key> --test 2
-```
+`--test` takes 1 to 5. The class site runs the same tests with different
+seeds, so a local pass is a good sign but not a promise.
 
 ## What is in this repository
 
 | Path | What it is |
 |---|---|
-| `CONTRACT.md` | the API every airline serves |
+| `CONTRACT.md` | the API every airline serves, and how to get started |
+| `examples/toy_airline.py` | a demo airline with no database, for seeing the loop work |
 | `src/flightcontrol/catalog.py` | builds the flight catalog from a fixed seed |
 | `src/flightcontrol/oracle.py` | the rules for a valid itinerary |
 | `src/flightcontrol/workload.py` | travelers, and the checks on every answer |

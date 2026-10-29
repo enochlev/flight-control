@@ -118,7 +118,8 @@
       line.append(el("span", "", clock(e.t)));
       if (e.kind === "book") {
         line.append(el("span", "route", `${e.origin}→${e.destination}`));
-        line.append(el("span", "who", `${e.team} · ${e.pax} pax${e.stops ? " · 1 stop" : ""}`));
+        const day = e.date ? new Date(e.date + "T12:00:00Z").toLocaleDateString([], {month: "short", day: "numeric"}) : "";
+        line.append(el("span", "who", `${e.team} · flies ${day} · ${e.pax} pax${e.stops ? " · 1 stop" : ""}`));
         line.append(el("span", "amt", money(e.cents || 0)));
       } else {
         line.append(el("span", "route cx", "CANCEL"));

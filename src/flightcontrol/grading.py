@@ -114,6 +114,8 @@ async def check_flights(ctx: Context, *, drained: bool) -> tuple[list[str], bool
             out.append(f"{fid}: GET /admin/flights did not answer")
             continue
         sold, held = body.get("seats_sold"), body.get("seats_held")
+        if body.get("capacity") != cap:
+            out.append(f"{fid}: capacity {body.get('capacity')}, the catalog says {cap}")
         if isinstance(sold, int) and sold > cap:
             oversold = True
             out.append(f"{fid}: OVERSOLD {sold} of {cap}")
@@ -182,17 +184,17 @@ def _base(rec: Recorder) -> dict:
 
 async def test_steady(ctx: Context, demand: Demand, stop: Callable[[], bool], rate: float = 1.0) -> dict:
     """Test 1 runs until told to stop. Nothing is reset or scored."""
-    start = window_start(ctx.rng, ctx.cat, 45)
+    start = window_start(ctx.rng, ctx.cat, 7)
     while not stop():
         await drive(ctx, demand, Mix(), rate=lambda t: rate, duration=300, start=start,
-                    span_days=45, max_inflight=32, stop=stop)
-        start = window_start(ctx.rng, ctx.cat, 45)
+                    span_days=7, max_inflight=32, stop=stop)
+        start = window_start(ctx.rng, ctx.cat, 7)
     return {"score": None, "gates_ok": None, "summary": "steady traffic stopped", **_base(ctx.rec)}
 
 
 async def test_rush(ctx: Context, demand: Demand, stop: Callable[[], bool]) -> dict:
     await reset(ctx.client)
-    start = window_start(ctx.rng, ctx.cat, 30)
+    start = window_start(ctx.rng, ctx.cat, 1)
 
     def rate(t: float) -> float:
         return RUSH_STEPS[min(int(t // RUSH_STEP_S), len(RUSH_STEPS) - 1)]
@@ -202,7 +204,7 @@ async def test_rush(ctx: Context, demand: Demand, stop: Callable[[], bool]) -> d
 
     ctx.emit("phase", text="rush: stepping 5 to 40 travelers per second")
     await drive(ctx, demand, Mix(), rate=rate, duration=RUSH_STEP_S * len(RUSH_STEPS),
-                start=start, span_days=30, tag=tag, stop=stop)
+                start=start, span_days=1, tag=tag, stop=stop)
     if ctx.background:
         await asyncio.wait(ctx.background)
     await replay_unknown(ctx)
@@ -311,7 +313,7 @@ async def test_restart(ctx: Context, demand: Demand, stop: Callable[[], bool],
     await reset(ctx.client)
     h = await health(ctx.client)
     boot_before = (h or {}).get("boot_id")
-    start = window_start(ctx.rng, ctx.cat, 30)
+    start = window_start(ctx.rng, ctx.cat, 1)
     timeline: dict[str, Any] = {"boot_before": boot_before}
     t0 = time.monotonic()
 
@@ -335,7 +337,7 @@ async def test_restart(ctx: Context, demand: Demand, stop: Callable[[], bool],
 
     task = asyncio.create_task(restarter())
     await drive(ctx, demand, Mix(p_cancel=0.05), rate=lambda t: 5, duration=duration,
-                start=start, span_days=30, stop=stop)
+                start=start, span_days=1, stop=stop)
     await task
     if ctx.background:
         await asyncio.wait(ctx.background)
@@ -375,12 +377,12 @@ async def test_restart(ctx: Context, demand: Demand, stop: Callable[[], bool],
 async def test_audit(ctx: Context, demand: Demand, stop: Callable[[], bool],
                      duration: float = 180, rate: float = 10) -> dict:
     await reset(ctx.client)
-    start = window_start(ctx.rng, ctx.cat, 20)
+    start = window_start(ctx.rng, ctx.cat, 1)
     mix = Mix(p_hold=0.5, p_abandon=0.25, p_decline=0.1, p_dup=0.15, p_cancel=0.15,
               cancel_delay=(1.0, 30.0))
     ctx.emit("phase", text="audit: mixed traffic with duplicates, cancels and abandoned holds")
     await drive(ctx, demand, mix, rate=lambda t: rate, duration=duration, start=start,
-                span_days=20, stop=stop)
+                span_days=1, stop=stop)
     if ctx.background:
         await asyncio.wait(ctx.background)
     ctx.emit("phase", text=f"draining {HOLD_TTL_S + 10:.0f} s so every hold expires")
