@@ -1,0 +1,32 @@
+services:
+  app:
+    build: .
+    environment:
+      AIRLINE_API_KEY: ${AIRLINE_API_KEY:-local-airline-key}
+      PGHOST: db
+      PGDATABASE: airline
+      PGUSER: airline
+      PGPASSWORD: ${AIRLINE_DB_PASSWORD:-local-airline-db}
+      PGCONNECT_TIMEOUT: "2"
+    ports:
+      - "127.0.0.1:${AIRLINE_PORT:-8080}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: airline
+      POSTGRES_USER: airline
+      POSTGRES_PASSWORD: ${AIRLINE_DB_PASSWORD:-local-airline-db}
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "airline", "-d", "airline"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    volumes:
+      - airline_data:/var/lib/postgresql/data
+
+volumes:
+  airline_data:
