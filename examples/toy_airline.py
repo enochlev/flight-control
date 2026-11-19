@@ -8,11 +8,10 @@ before you build your own. Test 4 (Restart) fails against it on purpose.
 Run it:
     uv run --with fastapi --with uvicorn uvicorn examples.toy_airline:app --port 8080
 Then, in a second terminal:
-    uv run flightcontrol test --url http://localhost:8080 --key toy-key-123 --test 1 --verbose
+    uv run flightcontrol test --url http://localhost:8080 --test 1 --verbose
 """
 
 import asyncio
-import os
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -22,7 +21,6 @@ from fastapi.responses import JSONResponse
 
 from flightcontrol import catalog, oracle
 
-API_KEY = os.environ.get("TOY_KEY", "toy-key-123")
 BOOT_ID = str(uuid.uuid4())
 HOLD_SECONDS = 60
 
@@ -57,12 +55,9 @@ def available(fid: str) -> int:
 
 
 @app.middleware("http")
-async def key_and_timing(request: Request, call_next):
+async def timing(request: Request, call_next):
     start = time.perf_counter()
-    if request.headers.get("authorization") != f"Bearer {API_KEY}":
-        response = error(401, "unauthorized")
-    else:
-        response = await call_next(request)
+    response = await call_next(request)
     response.headers["Server-Timing"] = f"app;dur={(time.perf_counter() - start) * 1000:.1f}"
     return response
 

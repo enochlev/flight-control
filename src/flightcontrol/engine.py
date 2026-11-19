@@ -70,16 +70,16 @@ class Engine:
     # -- house airline -------------------------------------------------------------
 
     def ensure_house(self) -> None:
-        url, key = os.environ.get("FC_HOUSE_URL", ""), os.environ.get("FC_HOUSE_KEY", "")
-        if not url or not key:
+        url = os.environ.get("FC_HOUSE_URL", "")
+        if not url:
             return
         t = store.team_by_slug("house")
         if t is None:
-            store.create_team("House Airline", "house", is_house=True, url=url, api_key=key)
+            store.create_team("House Airline", "house", is_house=True, url=url)
             t = store.team_by_slug("house")
         # The house airline is a reference for the instructor's own runs. It gets no
         # background traffic unless someone starts it from /admin.
-        store.update_team(t["id"], url=url, approved_url=url, api_key=key)
+        store.update_team(t["id"], url=url, approved_url=url)
         # Earlier versions started house traffic automatically. Switch that off once,
         # and leave any later start from /admin alone.
         done, _ = store.get("house_steady_cleared", False)
@@ -94,7 +94,7 @@ class Engine:
             def on_call(method: str, path: str, r) -> None:
                 ts.calls.append({"t": time.time(), "m": method, "p": path[:120], "s": r.status,
                                  "ms": round(r.rtt_ms, 1), "e": r.error})
-        return TeamClient(base, team["api_key"], on_call=on_call)
+        return TeamClient(base, on_call=on_call)
 
     # -- steady traffic ------------------------------------------------------------
 

@@ -31,7 +31,7 @@ def _cmd_test(args: argparse.Namespace) -> int:
             status = r.status or r.error
             say(f"  {method:6s} {path[:70]:70s} {status!s:>8}  {r.rtt_ms:7.1f} ms")
 
-        client = TeamClient(base, args.key, on_call=show if args.verbose and not quiet else None)
+        client = TeamClient(base, on_call=show if args.verbose and not quiet else None)
         rec = Recorder()
         stop_at = time.time() + args.minutes * 60 if args.test == 1 else None
 
@@ -105,7 +105,6 @@ def main() -> None:
     sub.add_parser("engine", help="run the traffic engine")
     t = sub.add_parser("test", help="run one test against your own airline")
     t.add_argument("--url", required=True, help="for example http://localhost:8080")
-    t.add_argument("--key", required=True, help="your API key")
     t.add_argument("--test", type=int, choices=[1, 2, 3, 4, 5], required=True)
     t.add_argument("--seed", type=int, default=4340)
     t.add_argument("--minutes", type=float, default=2.0, help="how long test 1 runs")

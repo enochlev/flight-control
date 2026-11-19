@@ -32,7 +32,23 @@ def short_holds(monkeypatch):
 
 
 def client_for(app) -> TeamClient:
-    return TeamClient("http://airline", toy.API_KEY, transport=httpx.ASGITransport(app=app), timeout=5)
+    return TeamClient("http://airline", transport=httpx.ASGITransport(app=app), timeout=5)
+
+
+def test_client_calls_airline_without_authorization():
+    async def app(scope, receive, send):
+        assert b"authorization" not in dict(scope["headers"])
+        await toy.app(scope, receive, send)
+
+    async def go():
+        client = client_for(app)
+        try:
+            response = await client.call("GET", "/health")
+            assert response.status == 200
+        finally:
+            await client.close()
+
+    asyncio.run(go())
 
 
 def answer(inner, method: str, path: str, payload, status: int = 200):
@@ -197,8 +213,7 @@ def test_duplicate_booking_needs_both_copies_answered():
 
 def test_toy_repeats_its_first_answer_after_a_cancel():
     async def go():
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=toy.app), base_url="http://t",
-                                     headers={"Authorization": f"Bearer {toy.API_KEY}"}) as c:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=toy.app), base_url="http://t") as c:
             f = catalog.get().flights[3000]
             h = (await c.post("/holds", json={"itinerary_id": f.flight_id, "passengers": 1})).json()
             body = {"hold_id": h["hold_id"], "passengers": [{"name": "A B"}],

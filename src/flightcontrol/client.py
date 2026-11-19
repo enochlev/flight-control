@@ -79,14 +79,14 @@ class Resp:
 
 
 class TeamClient:
-    def __init__(self, base_url: str, api_key: str, *, max_connections: int = 64,
+    def __init__(self, base_url: str, *, max_connections: int = 64,
                  timeout: float = TIMEOUT_S, on_call=None, transport=None) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.on_call = on_call  # called with (method, path, Resp) after every request
         self._client = httpx.AsyncClient(
             base_url=self.base_url,
-            headers={"Authorization": f"Bearer {api_key}", "User-Agent": USER_AGENT},
+            headers={"User-Agent": USER_AGENT},
             timeout=httpx.Timeout(timeout, connect=timeout),
             limits=httpx.Limits(max_connections=max_connections,
                                 max_keepalive_connections=max_connections),

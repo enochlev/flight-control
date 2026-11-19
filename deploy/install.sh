@@ -34,7 +34,6 @@ fi
 if [ ! -f .env ]; then
   cat > .env <<ENV
 FC_ADMIN_PASSWORD=$(openssl rand -hex 12)
-FC_HOUSE_KEY=$(openssl rand -hex 16)
 FC_PUBLIC_URL=${FC_PUBLIC_URL:-https://flights.enochlev.com}
 FC_ALLOWED_HOST_SUFFIXES=trycloudflare.com,enochlev.com
 FC_PORT=${FC_PORT:-8000}

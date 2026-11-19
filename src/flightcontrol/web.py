@@ -113,15 +113,11 @@ def _team_or_404(token: str) -> dict:
     return t
 
 
-def _mask(key: str) -> str:
-    return "" if not key else key[:3] + "•" * 6 + key[-2:] if len(key) > 6 else "•" * len(key)
-
-
 @app.get("/t/{token}", response_class=HTMLResponse)
 def team_page(request: Request, token: str, msg: str = "", err: str = ""):
     t = _team_or_404(token)
     runs = store.runs_for(t["id"], 30)
-    return _page(request, "team.html", team=t, runs=runs, key_mask=_mask(t["api_key"]),
+    return _page(request, "team.html", team=t, runs=runs,
                  ready=store.url_ready(t), pending=bool(t["url"]) and t["url"] != t["approved_url"],
                  practice_left=max(0, store.PRACTICE_RUNS_PER_DAY - store.practice_runs_today(t["id"])),
                  active=store.active_run(t["id"]), msg=msg, err=err, token=token)
@@ -133,7 +129,7 @@ def _back(token: str, **q: str) -> RedirectResponse:
 
 
 @app.post("/t/{token}/settings")
-def team_settings(token: str, url: str = Form(""), api_key: str = Form("")):
+def team_settings(token: str, url: str = Form("")):
     t = _team_or_404(token)
     fields: dict = {}
     url = url.strip()
@@ -145,11 +141,6 @@ def team_settings(token: str, url: str = Form(""), api_key: str = Form("")):
                 return _back(token, err=str(e))
         fields["url"] = url
         fields["steady"] = 0
-    if api_key.strip():
-        key = api_key.strip()
-        if not re.fullmatch(r"[A-Za-z0-9._~+/=-]{8,200}", key):
-            return _back(token, err="API key must be 8 to 200 characters of letters, digits or ._~+/=-")
-        fields["api_key"] = key
     store.update_team(t["id"], **fields)
     note = "Saved."
     if "url" in fields and fields["url"] and fields["url"] != t["approved_url"]:
@@ -161,7 +152,7 @@ def team_settings(token: str, url: str = Form(""), api_key: str = Form("")):
 def team_steady(token: str, on: int = Form(...)):
     t = _team_or_404(token)
     if on and not store.url_ready(t):
-        return _back(token, err="Test 1 starts once your URL is approved and your API key is set.")
+        return _back(token, err="Test 1 starts once your URL is approved.")
     store.update_team(t["id"], steady=1 if on else 0)
     return _back(token, msg="Test 1 is on." if on else "Test 1 is off.")
 
@@ -172,7 +163,7 @@ def team_run(token: str, test: int = Form(...)):
     if test not in (2, 3, 4, 5):
         return _back(token, err="Pick test 2, 3, 4 or 5.")
     if not store.url_ready(t):
-        return _back(token, err="Your URL has to be approved and your API key set first.")
+        return _back(token, err="Your URL has to be approved first.")
     if store.active_run(t["id"]):
         return _back(token, err="You already have a run queued or running.")
     if store.practice_runs_today(t["id"]) >= store.PRACTICE_RUNS_PER_DAY:

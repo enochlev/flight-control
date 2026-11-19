@@ -14,17 +14,12 @@
         <label for="url">Your airline's base URL</label>
         <input id="url" type="url" name="url" value="{{ team.url }}" placeholder="https://your-team.trycloudflare.com">
       </div>
-      <div class="field">
-        <label for="key">API key {% if key_mask %}(saved as <span class="mono">{{ key_mask }}</span>, leave blank to keep it){% endif %}</label>
-        <input id="key" type="password" name="api_key" autocomplete="off" placeholder="the key your server expects">
-      </div>
       <button type="submit">Save</button>
     </form>
     <p class="small" style="margin-bottom:0">
       {% if not team.url %}<span class="muted">No URL saved yet.</span>
       {% elif pending %}<span class="warn">Your URL is waiting for approval.</span> Your instructor approves each new URL before Flight Control calls it.
       {% else %}<span class="ok">Your URL is approved.</span>{% endif %}
-      {% if team.api_key %}<span class="ok">Your API key is saved.</span>{% else %}<span class="warn">No API key saved yet.</span>{% endif %}
       Approval only means Flight Control is allowed to call this URL. The call log below shows whether your server actually answers.
     </p>
   </section>
@@ -59,7 +54,7 @@
       {% endfor %}
     </table>
     <p class="small muted" style="margin-bottom:0">
-      {% if not ready %}The buttons start working once your URL is approved and your API key is saved.
+      {% if not ready %}The buttons start working once your URL is approved.
       {% elif active %}A run is already queued or running. The buttons come back when it finishes.
       {% elif practice_left == 0 %}You have used today's runs. Each one comes back 24 hours after it was queued.
       {% else %}{{ practice_left }} runs left in the last 24 hours.{% endif %}
@@ -144,8 +139,6 @@
       wasActive = !!s.active;
       const lastOk = calls.slice().reverse().find(c => c.s >= 200 && c.s < 300);
       if (lastOk) box.textContent += ` Last successful answer from your server at ${new Date(lastOk.t * 1000).toLocaleTimeString([], {hour12: false})}.`;
-      const last = calls[calls.length - 1];
-      if (last && (last.s === 401 || last.s === 403)) box.textContent += " Your server is refusing Flight Control's API key, so check that the key saved here matches your server.";
       failures = 0;
     } catch (e) {
       failures += 1;

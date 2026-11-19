@@ -25,7 +25,7 @@ You run every test on your own machine against your own server on
 git clone https://github.com/enochlev/flight-control
 cd flight-control
 uv sync
-uv run flightcontrol test --url http://localhost:8080 --key <your key> --test 1 --verbose
+uv run flightcontrol test --url http://localhost:8080 --test 1 --verbose
 ```
 
 `--test` takes 1 to 5. The class site runs the same tests with different

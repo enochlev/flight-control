@@ -65,6 +65,19 @@ def test_url_guard():
     assert check_url("http://localhost:8080/", allow_private=True) == "http://localhost:8080"
 
 
+@pytest.mark.parametrize("legacy_schema", [False, True])
+def test_team_readiness_without_airline_key(tmp_path, monkeypatch, legacy_schema):
+    monkeypatch.setenv("FC_DB", str(tmp_path / "fc.sqlite3"))
+    store.init()
+    if legacy_schema:
+        with store.connect() as con:
+            con.execute("ALTER TABLE teams ADD COLUMN api_key TEXT NOT NULL DEFAULT ''")
+    team = store.create_team("Team A", "team-a", url="https://team.example")
+    assert not store.url_ready(team)
+    store.update_team(team["id"], approved_url=team["url"])
+    assert store.url_ready(store.team_by_id(team["id"]))
+
+
 def test_leaderboard_takes_best_of_last_three(tmp_path, monkeypatch):
     monkeypatch.setenv("FC_DB", str(tmp_path / "fc.sqlite3"))
     store.init()

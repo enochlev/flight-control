@@ -23,7 +23,6 @@ CREATE TABLE IF NOT EXISTS teams (
     name TEXT NOT NULL,
     token TEXT UNIQUE NOT NULL,
     url TEXT NOT NULL DEFAULT '',
-    api_key TEXT NOT NULL DEFAULT '',
     approved_url TEXT NOT NULL DEFAULT '',
     steady INTEGER NOT NULL DEFAULT 0,
     is_house INTEGER NOT NULL DEFAULT 0,
@@ -84,14 +83,13 @@ def init(path: Path | None = None) -> None:
 
 # -- teams -------------------------------------------------------------------
 
-def create_team(name: str, slug: str, is_house: bool = False, url: str = "",
-                api_key: str = "") -> dict:
+def create_team(name: str, slug: str, is_house: bool = False, url: str = "") -> dict:
     token = secrets.token_urlsafe(18)
     with connect() as con:
         con.execute(
-            "INSERT INTO teams (slug, name, token, url, api_key, approved_url, is_house, created)"
-            " VALUES (?,?,?,?,?,?,?,?)",
-            (slug, name, token, url, api_key, url if is_house else "", int(is_house), time.time()))
+            "INSERT INTO teams (slug, name, token, url, approved_url, is_house, created)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (slug, name, token, url, url if is_house else "", int(is_house), time.time()))
     return team_by_slug(slug)  # type: ignore[return-value]
 
 
@@ -120,7 +118,7 @@ def teams() -> list[dict]:
 
 
 def update_team(team_id: int, **fields: Any) -> None:
-    allowed = {"url", "api_key", "approved_url", "steady", "name"}
+    allowed = {"url", "approved_url", "steady", "name"}
     sets = {k: v for k, v in fields.items() if k in allowed}
     if not sets:
         return
@@ -131,7 +129,7 @@ def update_team(team_id: int, **fields: Any) -> None:
 
 def url_ready(team: dict) -> bool:
     """A team URL can be called only once the instructor approved that exact URL."""
-    return bool(team["url"]) and team["url"] == team["approved_url"] and bool(team["api_key"])
+    return bool(team["url"]) and team["url"] == team["approved_url"]
 
 
 # -- runs --------------------------------------------------------------------

@@ -47,8 +47,6 @@ async def reset(client: TeamClient) -> None:
     if await health(client) is None:
         raise RunFailed("GET /health did not answer 200")
     r = await client.call("POST", "/admin/reset", timeout=30)
-    if r.status == 401:
-        raise RunFailed("POST /admin/reset answered 401. Check the API key on your team page.")
     if r.status != 200:
         raise RunFailed(f"POST /admin/reset answered {r.status or r.error}")
 

@@ -14,7 +14,7 @@
       {% for t in teams %}
         {% set lv = live.get(t.id, {}) %}
         <tr>
-          <td><strong>{{ t.name }}</strong>{% if t.is_house %} <span class="pill">house</span>{% endif %}<br><span class="small muted">key {{ "set" if t.api_key else "missing" }}</span></td>
+          <td><strong>{{ t.name }}</strong>{% if t.is_house %} <span class="pill">house</span>{% endif %}</td>
           <td class="small">{% if not t.is_house %}<button class="ghost copy" type="button" data-link="{{ public_url }}/t/{{ t.token }}">Copy link</button>{% endif %}</td>
           <td class="small mono" style="word-break:break-all">{{ t.url or "-" }}
             {% if t.url and t.url != t.approved_url %}

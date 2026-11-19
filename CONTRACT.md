@@ -44,7 +44,7 @@ uv run --with fastapi --with uvicorn uvicorn examples.toy_airline:app --port 808
 call go by.
 
 ```
-uv run flightcontrol test --url http://localhost:8080 --key toy-key-123 --test 1 --verbose
+uv run flightcontrol test --url http://localhost:8080 --test 1 --verbose
 ```
 
 Each line is one call, its status and how long it took. If your server is not
@@ -56,7 +56,7 @@ back. Even if something did restart it, every booking it kept in memory would
 be gone. Your airline has to come back on its own with every booking intact.
 
 ```
-uv run flightcontrol test --url http://localhost:8080 --key toy-key-123 --test 4
+uv run flightcontrol test --url http://localhost:8080 --test 4
 ```
 
 **Step 5.** Build your own airline that serves the same endpoints, start it on
@@ -64,8 +64,7 @@ a port, and point `--url` at it.
 
 ## A worked example
 
-One traveler, start to finish. Every request also carries the
-`Authorization` header.
+One traveler, start to finish.
 
 ```
 GET /search?origin=BOI&destination=JFK&date=2027-03-15&passengers=2
@@ -88,9 +87,6 @@ given back by the cancel.
 
 ## Basics
 
-- Every request carries `Authorization: Bearer <your API key>`. Reject
-  requests without it with `401`. You pick the key and enter it on your
-  team page. Treat it as low value and change it if it leaks.
 - Bodies are JSON. Times are UTC in ISO 8601 with a `Z`, for example
   `2027-03-15T14:05:00Z`. Dates are `YYYY-MM-DD`. Money is integer cents.
 - Errors return a JSON body `{"error": "<code>", "detail": "<text>"}` with the
@@ -361,7 +357,7 @@ flights, seeds and timing.
 ## Running the tests yourself
 
 ```
-uv run flightcontrol test --url http://localhost:8080 --key <your key> --test 3
+uv run flightcontrol test --url http://localhost:8080 --test 3
 ```
 
 At the end it prints the score, every rule that failed, why travelers failed,
