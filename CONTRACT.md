@@ -6,10 +6,8 @@ travelers. It calls these endpoints on your server, checks every answer
 against the catalog, and keeps its own record of every booking it was told
 about so it can audit you afterwards.
 
-You run Flight Control on your own computer against your own server on
-`localhost`. The class site at https://flights.enochlev.com shows this contract
-and gives each team a private page where it can also run the tests through a
-tunnel. Runs on your own machine never show up there.
+Run Flight Control on your own computer against your airline server at
+`localhost`. You do not need a public URL or a tunnel.
 
 How you build the system behind the API is up to you. That includes which
 database holds what, how you index it and how you keep it correct under load.
@@ -94,7 +92,7 @@ given back by the cancel.
   wrong type returns `422`.
 - Every response must include a `Server-Timing` header with your handling
   time, for example `Server-Timing: app;dur=12.4` (milliseconds). Test 2
-  scores this number so that tunnel and Wi-Fi delay do not count against you.
+  uses this number to measure time spent in your server.
 - Flight Control waits at most 2 seconds for a response. A request that times
   out is treated as **unknown**, not failed. Flight Control will retry unknown
   bookings with the same idempotency key before it audits you.
@@ -310,7 +308,7 @@ start again on its own (a Docker restart policy does this). Stay down for
 about 30 seconds and be healthy again within 60 seconds of the request, with a
 new `boot_id`. Flight Control checks `/health` every second, and it has to see
 your server down at least once, so a new `boot_id` without going down does not
-count. Keep your tunnel running while the app restarts.
+count. Your app must return at the same URL after it restarts.
 Every booking you confirmed before the restart must still be there after it,
 with the same status, flights, passengers and total.
 Whether your database also crashes, and how it recovers, is something you

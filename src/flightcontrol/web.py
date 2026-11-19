@@ -2,8 +2,7 @@
 
 Public pages show team names and live numbers only, never URLs or keys.
 A team's own page lives at /t/<token>, a secret link the instructor hands out.
-Instructor pages sit under /admin behind HTTP Basic auth, and should also sit
-behind Cloudflare Access in production.
+Instructor pages sit under /admin behind HTTP Basic auth.
 """
 
 from __future__ import annotations

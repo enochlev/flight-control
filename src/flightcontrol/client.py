@@ -32,7 +32,7 @@ class UnsafeURL(ValueError):
 
 
 def allowed_suffixes() -> list[str]:
-    raw = os.environ.get("FC_ALLOWED_HOST_SUFFIXES", "trycloudflare.com,enochlev.com")
+    raw = os.environ.get("FC_ALLOWED_HOST_SUFFIXES", "")
     return [s.strip().lower().lstrip(".") for s in raw.split(",") if s.strip()]
 
 
@@ -50,8 +50,11 @@ def check_url(url: str, *, allow_private: bool = False) -> str:
     if parts.username or parts.password:
         raise UnsafeURL("URL may not contain a user name or password")
     if not allow_private:
-        if not any(host == s or host.endswith("." + s) for s in allowed_suffixes()):
-            raise UnsafeURL(f"host must end in one of: {', '.join(allowed_suffixes())}")
+        suffixes = allowed_suffixes()
+        if not suffixes:
+            raise UnsafeURL("No airline domains have been configured for hosted runs")
+        if not any(host == s or host.endswith("." + s) for s in suffixes):
+            raise UnsafeURL(f"host must end in one of: {', '.join(suffixes)}")
         try:
             infos = socket.getaddrinfo(host, parts.port or 443, proto=socket.IPPROTO_TCP)
         except socket.gaierror as e:

@@ -6,6 +6,7 @@ services:
     environment:
       FC_ADMIN_PASSWORD: ${FC_ADMIN_PASSWORD:?set FC_ADMIN_PASSWORD in .env}
       FC_PUBLIC_URL: ${FC_PUBLIC_URL:-http://localhost:8000}
+      FC_ALLOWED_HOST_SUFFIXES: ${FC_ALLOWED_HOST_SUFFIXES:-}
       FC_DEV: ${FC_DEV:-0}
     volumes: [fcdata:/data]
     ports: ["127.0.0.1:${FC_PORT:-8000}:8000"]
@@ -14,7 +15,7 @@ services:
     build: .
     command: ["flightcontrol", "engine"]
     environment:
-      FC_ALLOWED_HOST_SUFFIXES: ${FC_ALLOWED_HOST_SUFFIXES:-trycloudflare.com,enochlev.com}
+      FC_ALLOWED_HOST_SUFFIXES: ${FC_ALLOWED_HOST_SUFFIXES:-}
       FC_HOUSE_URL: ${FC_HOUSE_URL:-}
       FC_HOUSE_RATE: ${FC_HOUSE_RATE:-2}
       FC_DEV: ${FC_DEV:-0}

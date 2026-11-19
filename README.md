@@ -4,10 +4,10 @@ Flight Control is the traffic generator and grader for Projects 2 and 3 in
 COMP 4340/6340 (Advanced Database Systems) at Northwest Nazarene University.
 
 Each team builds an airline booking service that follows
-[CONTRACT.md](CONTRACT.md). Teams run it on their own machines and expose it
-through a Cloudflare tunnel. Flight Control then plays the part of thousands
-of travelers. It searches, holds seats, books, cancels and audits, and it
-checks every answer against its own record of what happened.
+[CONTRACT.md](CONTRACT.md) and runs it on their own machine. Flight Control
+connects to it at `localhost` and plays the part of thousands of travelers.
+It searches, holds seats, books, cancels and audits, and it checks every
+answer against its own record of what happened.
 
 ## For students
 
@@ -18,8 +18,9 @@ Start with the Getting started section of the contract. It runs a small toy
 airline from `examples/` and shows Flight Control calling it, one line per
 call, so you can see the whole loop work before you write anything.
 
-You run every test on your own machine against your own server on
-`localhost`.
+Run every test on your own machine against your airline on `localhost`.
+Flight Control's command-line grader needs no public URL, tunnel, Docker
+Compose setup, `.env`, or admin password.
 
 ```
 git clone https://github.com/enochlev/flight-control
@@ -28,8 +29,7 @@ uv sync
 uv run flightcontrol test --url http://localhost:8080 --test 1 --verbose
 ```
 
-`--test` takes 1 to 5. The class site runs the same tests with different
-seeds, so a local pass is a good sign but not a promise.
+`--test` takes 1 to 5. Use `--seed` to run a test with a different seed.
 
 ## What is in this repository
 
@@ -44,20 +44,27 @@ seeds, so a local pass is a good sign but not a promise.
 | `src/flightcontrol/engine.py` | the process that sends all traffic |
 | `src/flightcontrol/web.py` | the web site |
 
-## Running the site
+## Optional instructor dashboard
 
-The site and the engine are two processes that share one SQLite file.
+The dashboard is separate from the command-line grader. To try it locally,
+run `uv run flightcontrol web` and `uv run flightcontrol engine` in separate
+terminals from the repository root. Set `FC_DEV=1` in both terminals and set
+`FC_ADMIN_PASSWORD` in the web terminal. Open
+`http://127.0.0.1:8000/admin` and sign in as `admin`. Create a team, save
+your airline's localhost URL on the team page, and approve it in the dashboard.
+Use `FC_DEV=1` only for a trusted local dashboard.
 
-```
-cp .env.example .env      # then set FC_ADMIN_PASSWORD
+For a hosted dashboard, Docker Compose can run the web and engine processes
+with a shared SQLite file. Copy `.env.example` to `.env`, set
+`FC_ADMIN_PASSWORD`, and configure `FC_PUBLIC_URL` and
+`FC_ALLOWED_HOST_SUFFIXES` for your deployment. The domain list is empty
+by default.
+
+```bash
 docker compose up -d --build
 ```
 
-The web site listens on 127.0.0.1:8000. Put it behind a Cloudflare named
-tunnel and put `/admin` behind Cloudflare Access. Create teams on `/admin`
-and hand each team its private link.
-
-Flight Control only calls a team URL after the instructor approves that exact
-URL, and only if it is https, ends in an allowed domain
-(`FC_ALLOWED_HOST_SUFFIXES`) and resolves to a public address. It never
-follows redirects.
+The container publishes the dashboard at `127.0.0.1:8000`. Serve it over
+HTTPS if you make it public. For hosted runs, Flight Control only calls an
+instructor-approved HTTPS URL on an explicitly allowed domain that resolves
+to a public address. Flight Control never follows redirects.

@@ -12,7 +12,7 @@
     <form method="post" action="/t/{{ token }}/settings">
       <div class="field">
         <label for="url">Your airline's base URL</label>
-        <input id="url" type="url" name="url" value="{{ team.url }}" placeholder="https://your-team.trycloudflare.com">
+        <input id="url" type="url" name="url" value="{{ team.url }}" placeholder="Your airline URL">
       </div>
       <button type="submit">Save</button>
     </form>
@@ -26,7 +26,7 @@
 
   <section class="card" style="margin-top:16px">
     <h2 style="margin-top:0">Practice runs</h2>
-    <p class="small muted" style="margin-top:0">These runs go through your tunnel and count only as practice. Your instructor runs the official tests.</p>
+    <p class="small muted" style="margin-top:0">Runs started here count as practice. Your instructor runs the official tests.</p>
     <div id="now" class="small muted" style="margin-bottom:12px">Checking what is running.</div>
     <div class="buttons" style="margin-bottom:14px">
       <form class="inline" method="post" action="/t/{{ token }}/steady">

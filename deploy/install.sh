@@ -34,8 +34,8 @@ fi
 if [ ! -f .env ]; then
   cat > .env <<ENV
 FC_ADMIN_PASSWORD=$(openssl rand -hex 12)
-FC_PUBLIC_URL=${FC_PUBLIC_URL:-https://flights.enochlev.com}
-FC_ALLOWED_HOST_SUFFIXES=trycloudflare.com,enochlev.com
+FC_PUBLIC_URL=${FC_PUBLIC_URL:-http://localhost:${FC_PORT:-8000}}
+FC_ALLOWED_HOST_SUFFIXES=${FC_ALLOWED_HOST_SUFFIXES:-}
 FC_PORT=${FC_PORT:-8000}
 ENV
   echo "Wrote $DIR/.env. The admin password is in it (user name admin)."
@@ -45,6 +45,3 @@ docker compose "${FILES[@]}" up -d --build
 docker compose "${FILES[@]}" ps
 echo
 echo "Flight Control is on http://127.0.0.1:$(grep FC_PORT .env | cut -d= -f2)"
-echo "Point a Cloudflare named tunnel at it, for example:"
-echo "  cloudflared tunnel route dns <tunnel> flights.enochlev.com"
-echo "  ingress: - hostname: flights.enochlev.com  service: http://127.0.0.1:8000"

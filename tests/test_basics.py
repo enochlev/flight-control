@@ -1,3 +1,4 @@
+import socket
 from datetime import date, timedelta
 
 import pytest
@@ -55,13 +56,21 @@ def test_check_itinerary_rejects_bad_connections(cat):
     assert why is not None
 
 
-def test_url_guard():
+def test_url_guard(monkeypatch):
+    monkeypatch.delenv("FC_ALLOWED_HOST_SUFFIXES", raising=False)
+    with pytest.raises(UnsafeURL, match="No airline domains"):
+        check_url("https://team.airlines.example")
+
+    monkeypatch.setenv("FC_ALLOWED_HOST_SUFFIXES", "airlines.example")
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **kw: [(None, None, None, "", ("8.8.8.8", 443))])
+    assert check_url("https://team.airlines.example/") == "https://team.airlines.example"
+
     with pytest.raises(UnsafeURL):
-        check_url("http://team.trycloudflare.com")
+        check_url("http://team.airlines.example")
     with pytest.raises(UnsafeURL):
         check_url("https://example.org")
     with pytest.raises(UnsafeURL):
-        check_url("https://user:pw@team.trycloudflare.com")
+        check_url("https://user:pw@team.airlines.example")
     assert check_url("http://localhost:8080/", allow_private=True) == "http://localhost:8080"
 
 
